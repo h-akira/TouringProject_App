@@ -1,0 +1,7 @@
+{
+  "name": "app-foreground",
+  "version": "1.0.0",
+  "description": "応答後にマップアプリを前面へ戻すためのローカルモジュール（US-2.04）",
+  "main": "src/index.ts",
+  "private": true
+}

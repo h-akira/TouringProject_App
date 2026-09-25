@@ -1,0 +1,63 @@
+# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+
+# dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Metro
+.metro-health-check*
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# macOS
+.DS_Store
+*.pem
+
+# local env files
+.env*.local
+# ⚠️ .env holds the upload keystore passwords (adr/009). Until the split it was
+# only excluded by the parent repository's .gitignore.
+.env
+.env.*
+!.env.example
+
+# Build output of the local native modules (modules/*/android/build/)
+build/
+
+# OpenAPI から生成する型。正本は親リポジトリの docs/02_api_openapi.yaml。
+# ⚠️ 生成を忘れると tsc が通らないので、npm の postinstall / prestart で
+# 自動生成するようにしてある（package.json）。手で叩くなら `npm run gen:api`。
+src/api/schema.ts
+
+# logs / temporary files
+*.log
+tmp/
+
+# typescript
+*.tsbuildinfo
+
+example
+
+# generated native folders (Development Build)
+# ⚠️ **先頭の `/` が要る。** `android/` と書くと**深さを問わず一致する**ため、
+# 自前のネイティブモジュール（`modules/*/android/`）まで巻き込んで
+# **Kotlinのソースが永久にコミットされない**（ビルドが通らなくなる）。
+/ios
+/android

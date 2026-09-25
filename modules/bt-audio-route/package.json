@@ -1,0 +1,7 @@
+{
+  "name": "bt-audio-route",
+  "version": "1.0.0",
+  "description": "SCO（インカム）の経路を公式手順で張るためのローカルモジュール",
+  "main": "src/index.ts",
+  "private": true
+}
