@@ -131,7 +131,7 @@ App/
       schema.ts         ⚠️ 自動生成。手で編集しない（gitignore）
 ```
 
-⚠️ **`src/app/` は expo-router の画面ディレクトリ**で、リポジトリ直下の `App/` とは別物。
+⚠️ **`src/app/` は expo-router の画面ディレクトリ**で、親リポジトリでの `App/`（このリポジトリ自体）とは別物。
 
 ## APIの型は自動生成
 
