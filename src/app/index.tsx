@@ -34,13 +34,17 @@ import {
   type RecordingSettings,
 } from "@/api/recordingSettings";
 import { loadReturnApp } from "@/api/returnApp";
+import { claimPress, parsePressedAt } from "@/api/handsfreeLaunch";
 import AppForeground from "@/native/app-foreground";
 import {
   acquireMicRoute,
   describeMicRoute,
   releaseMicRoute,
+  traceActiveRecording,
+  watchIntercomEnded,
   type MicRoute,
 } from "@/api/micRoute";
+import { trace } from "@/api/trace";
 import type {
   AskRequest,
   AskAcceptedResponse,
@@ -253,6 +257,11 @@ export default function Index() {
   // state の方は画面表示専用。
   const recordingRef = useRef(false);
 
+  // ⚠️ **録音の開始処理の最中か。** `recordingRef` は録音が始まってから立つので、
+  // それだけだと**開始処理（SCOの確立待ちで最大2秒）の間に2本目がすり抜ける。**
+  // 並走すると、後発の `setAudioModeAsync` が先発のSCOを潰す（実機で発生）。
+  const startingRef = useRef(false);
+
   // 回答の読み上げ（US-2.02）。URLを差し替えて鳴らすだけなので、
   // プレイヤーは1つを使い回す。
   // ⚠️ 音声は署名付きURLで来る（数分で失効）。届いたらすぐ鳴らす。
@@ -270,6 +279,13 @@ export default function Index() {
   // 📌 **「インカムで録れているつもりが本体マイクだった」を二度と起こさない**ため、
   // 録音ごとに残す。⚠️ **実際これが無くて走行1回分を誤認した。**
   const micRouteRef = useRef<MicRoute | null>(null);
+
+  // インカム側で経路が切れた通知（＝2回目の押下）の購読解除。録音ごとに張り直す。
+  const unwatchIntercom = useRef<(() => void) | null>(null);
+  function stopWatchingIntercom() {
+    unwatchIntercom.current?.();
+    unwatchIntercom.current = null;
+  }
 
   // ⚠️ **インカムがあるのに経路を張れなかったときだけ**画面に出す。
   // 📌 **未接続（室内利用）では何も出さない** — **正常な使い方なので邪魔になる。**
@@ -299,13 +315,9 @@ export default function Index() {
   // 送る ACTION_VOICE_COMMAND を MainActivity（ネイティブ側）が deep link に
   // 読み替えてアプリを開く（`adr/006`）。⚠️ **「起動経路をつなぐだけ」**の
   // 方針どおり、ここでは既存の録音開始処理を呼ぶだけにする（`pre-research/handsfree/`）。
+  // ⚠️ **処理済みかどうかはURL文字列ではなく押した時刻で判定する**
+  // （`useURL()` は古いURLを遅れて返すことがある。src/api/handsfreeLaunch.ts）。
   const launchUrl = useURL();
-  // ⚠️ **直近に処理したURLを覚えておく**（真偽値ではなく文字列で持つ）。
-  // ネイティブ側はボタンを押すたびに異なるURL（`autoRecord=<時刻>`）を送るので、
-  // 「このURLはもう処理した」を文字列比較で判定すれば、2回目以降のボタン押下でも
-  // 正しく再発火する。apiKey未ロード等で開始できなかった場合は空のままにし、
-  // 次のレンダーで再挑戦できるようにする。
-  const autoRecordHandledUrl = useRef<string | null>(null);
 
   // この一往復がハンズフリー起動から始まったか（US-2.04）。
   // ⚠️ **回答後にマップへ戻すのは、この場合だけ。** 画面から自分で操作した
@@ -593,11 +605,13 @@ export default function Index() {
    */
   async function startRecording(): Promise<boolean> {
     // ref で見る。連打されたときも、再レンダーを待たずに2度目を弾ける。
-    if (recordingRef.current || sending) return false;
+    // ⚠️ **開始処理中も弾く**（`startingRef` 参照）。最初の await より前に立てる。
+    if (recordingRef.current || startingRef.current || sending) return false;
     if (!apiKey) {
       setAnswer("エラー: APIキーが未設定です（設定画面で入力してください）");
       return false;
     }
+    startingRef.current = true;
     try {
       const { granted } = await requestRecordingPermissionsAsync();
       if (!granted) {
@@ -613,7 +627,7 @@ export default function Index() {
       // 本体マイクで録って続行する（インカム未接続の室内利用も同じ経路）。
       const route = await acquireMicRoute();
       micRouteRef.current = route;
-      console.log("[recording] mic:", describeMicRoute(route));
+      trace("[recording] mic:", describeMicRoute(route));
       // ⚠️ **「インカムはあるのに使えていない」ときだけ知らせる。**
       // **本体マイクで録ると走行中は風とエンジン音に埋もれる**ので、
       // 停車後に気づけるようにしておく（走行中は画面を見られない）。
@@ -628,11 +642,32 @@ export default function Index() {
       recordingStartedAt.current = Date.now();
       setRecording(true);
       setAnswer(null);
+      // ⚠️ **インカムで録るときは、2回目の押下は「経路が切れた」通知として届く**
+      // （Intent は来ない。src/api/micRoute.ts）。方式C をこの経路でも成立させる。
+      stopWatchingIntercom();
+      if (route.kind === "intercom") {
+        unwatchIntercom.current = watchIntercomEnded((event) => {
+          if (!recordingRef.current) {
+            trace("[handsfree] intercom ended while not recording -> ignore", event);
+            return;
+          }
+          const elapsed = Date.now() - (recordingStartedAt.current ?? 0);
+          // ⚠️ **短すぎる録音は送らない**（方式C の押下と同じ扱い）。
+          if (elapsed < MIN_RECORDING_MS) {
+            trace(`[handsfree] intercom ended too soon (${elapsed}ms) -> ignore`);
+            return;
+          }
+          trace(`[handsfree] intercom ended while recording (${elapsed}ms) -> send`);
+          void stopRecordingAndSend();
+        });
+      }
+      // 📌 **実際にどのマイクで録っているか**を残す（録音が始まるまで少し待つ）。
+      setTimeout(() => void traceActiveRecording("after start"), 800);
       recordingTimer.current = setTimeout(() => {
         // 上限に達した。⚠️ **必ず送る。**
         // 押し忘れかもしれないし、長い質問かもしれないが、
         // **どちらにせよ捨てると質問ごと失われる**（adr/008）。
-        console.log("[recording] max reached -> send");
+        trace("[recording] max reached -> send");
         void stopRecordingAndSend();
       }, settingsRef.current.maxRecordingMs);
       // 自動送信までの残り秒数を出す。⚠️ **上限タイマーと同じ値**を渡す。
@@ -651,8 +686,14 @@ export default function Index() {
       }
       // 開始に失敗したらカウントダウンも残さない。
       stopCountdown();
+      // ⚠️ **張った経路も戻す。** 音声認識が残ると次の開始が断られる。
+      stopWatchingIntercom();
+      trace("[recording] start failed:", e);
+      void releaseMicRoute("start failed");
       setAnswer("録音を開始できませんでした: " + String(e));
       return false;
+    } finally {
+      startingRef.current = false;
     }
   }
 
@@ -661,16 +702,21 @@ export default function Index() {
   // startRecording を呼んでもエラーで無音に終わるだけ（画面を見ない前提なので
   // 気づけない）。coords・apiKey は非同期に届くので、揃うまで「未処理」の
   // ままにしておき、揃った時点のレンダーで自然に再評価させる
-  // （`autoRecordHandledUrl` を先に確定させない）。
+  // （`claimPress` を先に呼ばない）。
   useEffect(() => {
     if (!launchUrl || !coords || !apiKey) return;
-    if (autoRecordHandledUrl.current === launchUrl) return;
-    if (!parseUrl(launchUrl).queryParams?.autoRecord) return;
-    autoRecordHandledUrl.current = launchUrl;
+    const pressedAt = parsePressedAt(parseUrl(launchUrl).queryParams?.autoRecord);
+    if (pressedAt === null) return;
+    const claim = claimPress(pressedAt);
+    if (claim !== "new") {
+      // ⚠️ **古いURLの再送はここで止まる**（src/api/handsfreeLaunch.ts）。
+      trace(`[handsfree] ignore ${claim} press: url=${launchUrl}`);
+      return;
+    }
     // ⚠️ **この行が届くこと自体が方式Cの検証になる**（FINDINGS.md §16）。
     // マイクを掴んでいる最中に Bluetooth スタックが VOICE_COMMAND を
     // 送るかは端末・インカム側の挙動で、コードからは判断できない。
-    console.log(
+    trace(
       `[handsfree] VOICE_COMMAND received: recording=${recordingRef.current} ` +
         `sending=${sending} url=${launchUrl}`,
     );
@@ -687,14 +733,20 @@ export default function Index() {
         // 📌 **押し直しは弾かれるだけ**なので、上限（方式D）で必ず送られる。
         const elapsed = Date.now() - (recordingStartedAt.current ?? 0);
         if (elapsed < MIN_RECORDING_MS) {
-          console.log(`[handsfree] second press too soon (${elapsed}ms) -> ignore`);
+          trace(`[handsfree] second press too soon (${elapsed}ms) -> ignore`);
           return;
         }
-        console.log(`[handsfree] second press while recording (${elapsed}ms) -> send`);
+        trace(`[handsfree] second press while recording (${elapsed}ms) -> send`);
         // ⚠️ **ハンズフリーの印は倒さない。** この一往復は最初の押下から
         // 続いているので、`launchedHandsFree` / `wasHandsFree` は
         // 立ったままにして、回答後にマップへ戻す経路を保つ。
         void stopRecordingAndSend();
+        return;
+      }
+      // ⚠️ **開始処理の最中の押下は黙って捨てる。** 録音はまだ始まっていないので
+      // 送るものが無く、startRecording に渡すと「いま応答中です」と読み上げてしまう。
+      if (startingRef.current) {
+        trace("[handsfree] press while starting -> ignore");
         return;
       }
       // ⚠️ **応答待ちの最中にも押されうる。** その場合 startRecording は
@@ -704,7 +756,7 @@ export default function Index() {
       if (!started) {
         // ⚠️ **黙って諦めない。** 走行中は画面を見ないので、無反応だと
         // 「押せていない」のか「壊れた」のか区別がつかない。
-        console.log("[handsfree] could not start recording (busy or no key)");
+        trace("[handsfree] could not start recording (busy or no key)");
         Speech.speak("いま応答中です。少し待ってからもう一度お話しください。", {
           language: "ja-JP",
         });
@@ -742,19 +794,21 @@ export default function Index() {
     recordingRef.current = false;
     recordingStartedAt.current = null;
     setRecording(false);
+    stopWatchingIntercom();
+    trace("[recording] discard");
     // 後片付けなので、失敗しても伝える相手がいない（画面を離れている）。
     void (async () => {
       try {
         await recorder.stop();
-        await releaseMicRoute();
+        await releaseMicRoute("discard");
         await setAudioModeAsync(AUDIO_MODE_PLAYBACK);
       } catch (e) {
         // ⚠️ **止められなくても音声モードだけは必ず戻す。**
         // ここで諦めると録音向きのモードが残り、**以降の読み上げが鳴らない**。
         // 走行中は画面を見ないので、無音になった理由に気づけない。
-        console.warn("failed to discard the recording", e);
+        trace("failed to discard the recording", e);
         try {
-          await releaseMicRoute();
+          await releaseMicRoute("discard (after error)");
           await setAudioModeAsync(AUDIO_MODE_PLAYBACK);
         } catch {
           // ここまで失敗したら打つ手が無い。次の録音開始時に再度試みる。
@@ -795,21 +849,25 @@ export default function Index() {
     }
     stopCountdown();
     setRecording(false);
+    stopWatchingIntercom();
+    trace("[recording] stop -> send");
 
     let uri: string | null = null;
     try {
+      // 📌 **止める直前のマイクも残す**（途中でインカムから外れていないか）。
+      await traceActiveRecording("before stop");
       await recorder.stop();
       uri = recorder.uri;
       // ⚠️ **経路を必ず解放する。** 立てっぱなしだと通話用のモードが残り、
       // **読み上げが通話経路に流れる**（adr/010）。
-      await releaseMicRoute();
+      await releaseMicRoute("send");
       // 録り終えたら再生できる状態に戻す（読み上げがここで鳴る）。
       await setAudioModeAsync(AUDIO_MODE_PLAYBACK);
     } catch (e) {
       // ⚠️ **失敗しても音声モードは戻す。** 録音向きのまま残すと
       // **以降の読み上げが鳴らなくなり**、走行中はその理由に気づけない。
       try {
-        await releaseMicRoute();
+        await releaseMicRoute("send (after error)");
         await setAudioModeAsync(AUDIO_MODE_PLAYBACK);
       } catch {
         // ここまで失敗したら打つ手が無い。
@@ -900,7 +958,7 @@ export default function Index() {
     try {
       Speech.speak(message, { language: "ja-JP" });
     } catch (e) {
-      console.warn("failed to announce", e);
+      trace("failed to announce", e);
     }
   }
 
@@ -915,7 +973,7 @@ export default function Index() {
       player.replace({ uri: audioUrl });
       player.play();
     } catch (e) {
-      console.warn("failed to play the answer", e);
+      trace("failed to play the answer", e);
     }
   }
 
@@ -945,7 +1003,7 @@ export default function Index() {
     // **機能が壊れているのと見分けがつかない**（実際にそう見えた）。
     const packageName = returnAppRef.current;
     if (!packageName) {
-      console.log("[handsfree] no return app configured; staying in the app");
+      trace("[handsfree] no return app configured; staying in the app");
       return;
     }
 
@@ -955,10 +1013,10 @@ export default function Index() {
       // 見ていないので気づけない。実機では `adb logcat | grep handsfree` で追える。
       // ⚠️ **true でも戻ったとは限らない。** アプリが既に背面にある状態で
       // 呼ぶと、Android 10+ は起動を黙って無視する（例外も出ず成功扱い）。
-      console.log(`[handsfree] launchApp(${packageName}) returned ${launched}`);
+      trace(`[handsfree] launchApp(${packageName}) returned ${launched}`);
     } catch (e) {
       // 戻れなくても回答は鳴っている。ここで止める理由はない。
-      console.warn("failed to return to the map app", e);
+      trace("failed to return to the map app", e);
     }
   }
 

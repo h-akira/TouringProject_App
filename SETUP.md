@@ -220,6 +220,26 @@ unzip -p android/app/build/outputs/apk/release/app-release.apk assets/index.andr
 ⚠️ **日本語では検索しない** — Hermesは**UTF-16で格納する**ので `grep` に写らない
 （確かめ方は下記）。
 
+### 走行後に記録を取り出す
+
+⚠️ **`adb logcat` は数分で流れる**ので、走行中の出来事は走行後には残っていない。
+📌 **そのため、経路まわり（ネイティブ）とアプリ（JS の `trace()`）の記録を端末内のファイルにも書いている**
+（`src/api/trace.ts`。2MB を超えると `.1` に回して書き直す）。
+
+```sh
+adb pull /sdcard/Android/data/com.touringproject.app/files/btroute-trace.log
+adb pull /sdcard/Android/data/com.touringproject.app/files/btroute-trace.log.1   # あれば1つ前
+```
+
+| 目印 | 何が分かるか |
+|---|---|
+| `[vr] start result: ok=...` | インカムの経路が張れたか・何msかかったか |
+| `[hfp] audio: ... -> ...` | インカムの経路の開閉（**2回目の押下はここに出る**） |
+| `[vr] sco lost by remote` | インカム側で経路が切れた（＝2回目の押下とみなした） |
+| `[mic] recording (...)` | ⚠️ **実際に録音しているマイク**（`bluetooth_sco` ならインカム） |
+
+⚠️ **位置情報は書いていない**が、**機器名は入る**。リポジトリに貼るときは確認すること。
+
 ### ビルド後に確かめること
 
 ```sh

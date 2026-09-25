@@ -72,6 +72,8 @@ npx expo start          # 開発サーバー（Metro）を起動
   （未設定なら画面の「設定」ボタンにその旨が出る）
   📌 **「戻らない」にしても選んだアプリは残る**ので、戻せばそのまま使える
 - 📌 **戻るのは回答が届いた時点**で、**読み上げは戻ったあとに背面で鳴る**
+- 📌 **インカムを繋いでいれば、録音はインカムのマイクで行う。** 張れなかったときだけ
+  画面に黄色の警告が出る（[docs/01c](https://github.com/h-akira/TouringProject/blob/main/docs/01c_app_client.md) §3a）
 
 > 📌 **進行方位（矢印）は走らないと出ない。** 停車中・転回直後は「まだ出せません」が正常
 > （5m以上動いた直近の点が必要）。詳細は [docs/01b](https://github.com/h-akira/TouringProject/blob/main/docs/01b_heading.md)。
@@ -109,6 +111,8 @@ App/
   modules/
     app-foreground/     自前のネイティブ機能（Expo Modules API・autolink）
                         応答後にマップアプリを前面へ戻す
+    bt-audio-route/     インカムのマイクの経路（音声認識として張る）
+                        ・経路と録音の記録ファイル（走行後に取り出す。SETUP.md）
   android/              ⚠️ 生成物（gitignore）。手で編集しない
   src/
     app/                画面（expo-router。ファイル名がURLになる）
@@ -117,6 +121,9 @@ App/
       settings.tsx      APIキー／録音の設定／応答後に戻るアプリ
     api/
       apiKey.ts         キーの保管（expo-secure-store）
+      micRoute.ts       インカムの経路の確保・解放・2回目の押下の検知
+      handsfreeLaunch.ts  ボタン押下の重複判定（押した時刻で見る）
+      trace.ts          記録（console.log ＋ 端末内のファイル）
       voice.ts          録音設定・音声モード・送信
       recordingSettings.ts  録音の設定の保管（AsyncStorage）
       returnApp.ts      応答後に戻るアプリの保管（AsyncStorage）

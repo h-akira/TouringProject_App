@@ -9,6 +9,11 @@
  * ⚠️ **`expo-audio` の `setInput()` は使えない**（仕様違反で黙って失敗する）ので、
  * 📌 **経路だけを自前モジュール `bt-audio-route` で張る。**
  *
+ * ⚠️ **張り方は「音声認識」**（`startVoiceRecognition`）。仮想通話（`acquireSco`）で張ると、
+ * ①インカムのボタンで起動した直後は張れず ②録音中のボタンが「電話を切る」になって
+ * 2回目の押下がアプリに届かない（`pre-research/mic-routing/FINDINGS.md` §9・§10）。
+ * 📌 **その代わり、2回目の押下は `watchIntercomEnded()` の通知として届く。**
+ *
  * ## ⚠️ 「張れない」には2種類ある（混ぜない）
  *
  * | 状況 | 扱い |
@@ -21,16 +26,19 @@
  * ⚠️ **それが無かったために、走行1回分の録音を「インカムで録れている」と誤認した。**
  */
 import { PermissionsAndroid, Platform } from "react-native";
-import BtAudioRoute from "@/native/bt-audio-route";
+import BtAudioRoute, {
+  type VoiceRecognitionEndedEvent,
+} from "@/native/bt-audio-route";
+import { trace } from "@/api/trace";
 
 /**
  * ⚠️ **SCO の確立を待つ上限。**
  *
- * **実測では 270ms で張れた**（Pixel 8a）。⚠️ **走行中はボタンを押してから
- * 録音が始まるまでの遅延になる**ので、**待ちすぎない。**
- * 📌 **A2DP で音楽を鳴らしている最中は伸びうる**ため、実測値より余裕を持たせてある。
+ * **仮想通話では 270〜955ms で張れた**（Pixel 8a）。⚠️ **音声認識での値は未実測**なので、
+ * **検証中は長めに取る**（⚠️ **走行中はボタンを押してから録音が始まるまでの遅延になる**。
+ * 実測できたら詰める）。
  */
-const ACQUIRE_TIMEOUT_MS = 2_000;
+const ACQUIRE_TIMEOUT_MS = 4_000;
 
 /** どのマイクで録ることになったか。⚠️ **送信結果と一緒に残す。** */
 export type MicRoute =
@@ -66,6 +74,7 @@ export async function acquireMicRoute(): Promise<MicRoute> {
     }
 
     const devices = await BtAudioRoute.getDevices();
+    trace("[mic] devices:", devices);
 
     // ⚠️ **インカムが無いのは「異常」ではない。** 室内で使うときは
     // **本体マイクで録るのが正しい**ので、黙って通す。
@@ -73,21 +82,46 @@ export async function acquireMicRoute(): Promise<MicRoute> {
       return { kind: "builtin", reason: "no-intercom" };
     }
 
-    const result = await BtAudioRoute.acquireSco(ACQUIRE_TIMEOUT_MS);
+    const result = await BtAudioRoute.startVoiceRecognition(ACQUIRE_TIMEOUT_MS);
+    trace("[mic] startVoiceRecognition:", result);
     if (result.ok) {
       return { kind: "intercom", elapsedMs: result.elapsedMs };
     }
 
     // ⚠️ **ここが異常。** **インカムはあるのに経路が張れていない。**
     // 📌 **録音は続けるが、後から分かるように必ず残す。**
-    console.warn("[mic] インカムはあるがSCOを張れなかった:", result.note);
+    trace("[mic] ⚠️ インカムはあるがSCOを張れなかった:", result.note);
     return { kind: "builtin", reason: "acquire-failed", note: result.note };
   } catch (e) {
     // ⚠️ **ここで落とさない。** 経路の確保に失敗しても、
     // **本体マイクで録れるなら録った方がよい。**
     const note = e instanceof Error ? e.message : String(e);
-    console.warn("[mic] 経路の確保で例外:", note);
+    trace("[mic] ⚠️ 経路の確保で例外:", note);
     return { kind: "builtin", reason: "acquire-failed", note };
+  }
+}
+
+/**
+ * ⚠️ **インカム側で経路が切れたら呼ばれる**（＝**2回目の押下**。自分で解放した場合は呼ばれない）。
+ * 戻り値で購読を解除する。
+ */
+export function watchIntercomEnded(
+  onEnded: (event: VoiceRecognitionEndedEvent) => void,
+): () => void {
+  const sub = BtAudioRoute.addListener("onVoiceRecognitionEnded", (event) => {
+    trace("[mic] intercom ended:", event);
+    onEnded(event);
+  });
+  return () => sub.remove();
+}
+
+/** いま録音がどのマイクで行われているかを記録に残す（⚠️ **経路の成否の最終確認**）。 */
+export async function traceActiveRecording(label: string): Promise<void> {
+  try {
+    const info = await BtAudioRoute.describeRecording();
+    trace(`[mic] recording (${label}):`, info.recordings, info.snapshot);
+  } catch (e) {
+    trace(`[mic] describeRecording failed (${label}):`, e);
   }
 }
 
@@ -97,12 +131,14 @@ export async function acquireMicRoute(): Promise<MicRoute> {
  * ⚠️ **立てっぱなしにすると端末全体の音の出方が変わる**
  * （`MODE_IN_COMMUNICATION` のまま残り、**読み上げが通話用の経路に流れる**）。
  */
-export async function releaseMicRoute(): Promise<void> {
+export async function releaseMicRoute(reason: string): Promise<void> {
   try {
+    // ⚠️ **音声認識を先に止める。** 残すと次の `startVoiceRecognition` が断られる。
+    await BtAudioRoute.stopVoiceRecognition(reason);
     await BtAudioRoute.releaseSco();
   } catch (e) {
     // ⚠️ **握り潰さない。** 解放漏れは次の録音・読み上げに影響する。
-    console.warn("[mic] 経路の解放に失敗:", e);
+    trace("[mic] ⚠️ 経路の解放に失敗:", e);
   }
 }
 
