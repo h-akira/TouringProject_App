@@ -95,10 +95,11 @@ class BtAudioRouteModule : Module() {
 
   // 音声認識のセッション。null なら張っていない。
   private var vrDevice: BluetoothDevice? = null
+  // ⚠️ セッションの番号。終わらせるたびに進め、古いセッションの監視・通知を無効にする
+  // （自分で止めたときの切断を「2回目の押下」と取り違えないのも、これで担保する）。
+  private var vrSession = 0
   private var vrStartedAt = 0L
   private var vrConnectedAt = 0L
-  // ⚠️ 自分で止めている最中か。これが立っている間の切断は「2回目の押下」ではない。
-  private var vrReleasing = false
   // 開始待ち（SCO の確立待ち）の完了関数。
   private var vrPending: ((Boolean, String) -> Unit)? = null
   private var lastAudioState = -1
@@ -117,6 +118,13 @@ class BtAudioRouteModule : Module() {
     }
 
     OnDestroy {
+      // ⚠️ 経路を戻してから片付ける（JS の再読み込み等で SCO と通話モードが残らないように）。
+      runCatching {
+        vrPending = null
+        headset?.let { endSession(it, "module destroyed") }
+        if (audioManager.mode != AudioManager.MODE_NORMAL) audioManager.mode = AudioManager.MODE_NORMAL
+      }
+      main.removeCallbacksAndMessages(null)
       receiver?.let { runCatching { context.unregisterReceiver(it) } }
       receiver = null
       headset?.let { h ->
@@ -297,7 +305,10 @@ class BtAudioRouteModule : Module() {
     val startedAt = System.currentTimeMillis()
     trace("vr", "start requested: timeout=${timeoutMs}ms ${snapshot()}")
 
-    fun resolve(ok: Boolean, note: String) {
+    var resolved = false
+    val resolve: (Boolean, String) -> Unit = resolve@{ ok, note ->
+      if (resolved) return@resolve
+      resolved = true
       val ms = elapsed(startedAt)
       trace("vr", "start result: ok=$ok elapsed=${ms}ms note=$note ${snapshot()}")
       promise.resolve(
@@ -316,81 +327,93 @@ class BtAudioRouteModule : Module() {
         resolve(false, "BluetoothHeadset のプロキシが得られない")
         return@withHeadset
       }
-      val devices = runCatching { h.connectedDevices }.getOrElse {
-        resolve(false, "connectedDevices が例外: ${it.javaClass.simpleName}: ${it.message}")
+      val device = runCatching { pickDevice(h) }.getOrElse {
+        resolve(false, "接続機器の取得が例外: ${it.javaClass.simpleName}: ${it.message}")
         return@withHeadset
       }
-      trace("vr", "connected headsets: ${devices.joinToString { name(it) }}")
-      val device = devices.firstOrNull()
       if (device == null) {
         resolve(false, "HFP で接続中の機器が無い")
         return@withHeadset
       }
 
-      // 前のセッションが残っていたら先に止める（残っていると startVoiceRecognition が断られる）。
+      // 前のセッションが残っていたら止める。⚠️ 止めてすぐ始めると、SCO がまだ切れておらず
+      // HeadsetService.startVoiceRecognition が断る（isAudioOn）。切れるのを待ってから始める。
       if (vrDevice != null) {
-        trace("vr", "previous session still active -> stop first")
-        runCatching { h.stopVoiceRecognition(vrDevice) }
-        vrDevice = null
+        trace("vr", "previous session still active -> stop and wait")
+        endSession(h, "superseded")
       }
-
-      vrDevice = device
-      vrStartedAt = startedAt
-      vrConnectedAt = 0L
-      vrReleasing = false
-
-      val onTimeout = Runnable { vrPending?.invoke(false, "SCO確立待ちがタイムアウト") }
-      // ⚠️ SCO の確立をブロードキャストとポーリングの両方で待つ（片方が来なくても進めるように）。
-      val poll = object : Runnable {
-        override fun run() {
-          if (vrPending == null) return
-          if (runCatching { h.isAudioConnected(device) }.getOrDefault(false)) {
-            vrPending?.invoke(true, "確立（ポーリングで検知）")
-          } else {
-            main.postDelayed(this, POLL_MS)
-          }
-        }
+      waitAudioOff(h, device, AUDIO_OFF_WAIT_MS) { off ->
+        if (!off) trace("vr", "audio still on after ${AUDIO_OFF_WAIT_MS}ms (may be refused)")
+        begin(h, device, timeoutMs, startedAt, resolve)
       }
-      vrPending = { ok, note ->
-        vrPending = null
-        main.removeCallbacks(onTimeout)
-        main.removeCallbacks(poll)
-        if (ok) {
-          vrConnectedAt = System.currentTimeMillis()
-          // ⚠️ setCommunicationDevice() は呼ばない（上のクラスコメント参照）。モードだけ立てる。
-          val before = modeName(audioManager.mode)
-          audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-          trace("vr", "mode $before -> ${modeName(audioManager.mode)}")
-          startSessionMonitor(h, device)
-        } else {
-          // 張れなかったら音声認識も止める（インカムを待たせたままにしない）。
-          val stopped = runCatching { h.stopVoiceRecognition(device) }
-          trace("vr", "cleanup after failure: stopVoiceRecognition=${stopped.getOrNull()} ${stopped.exceptionOrNull() ?: ""}")
-          vrDevice = null
-        }
-        resolve(ok, note)
-      }
-      main.postDelayed(onTimeout, timeoutMs.toLong())
-
-      val accepted = runCatching { h.startVoiceRecognition(device) }
-      trace("vr", "startVoiceRecognition(${name(device)}) -> ${accepted.getOrNull()} ${accepted.exceptionOrNull() ?: ""}")
-      if (accepted.getOrDefault(false) != true) {
-        vrPending?.invoke(false, "startVoiceRecognition が ${accepted.exceptionOrNull()?.javaClass?.simpleName ?: "false"} を返した")
-        return@withHeadset
-      }
-      // すでに張れていてイベントが来ない場合に備え、すぐ1回目を見る。
-      main.post(poll)
     }
   }
 
+  private fun begin(
+    h: BluetoothHeadset,
+    device: BluetoothDevice,
+    timeoutMs: Int,
+    startedAt: Long,
+    resolve: (Boolean, String) -> Unit,
+  ) {
+    val session = ++vrSession
+    vrDevice = device
+    vrStartedAt = startedAt
+    vrConnectedAt = 0L
+
+    val onTimeout = Runnable {
+      if (vrSession == session) vrPending?.invoke(false, "SCO確立待ちがタイムアウト")
+    }
+    // ⚠️ SCO の確立をブロードキャストとポーリングの両方で待つ（片方が来なくても進めるように）。
+    val poll = object : Runnable {
+      override fun run() {
+        if (vrSession != session || vrPending == null) return
+        val d = vrDevice ?: return
+        if (runCatching { h.isAudioConnected(d) }.getOrDefault(false)) {
+          vrPending?.invoke(true, "確立（ポーリングで検知）")
+        } else {
+          main.postDelayed(this, POLL_MS)
+        }
+      }
+    }
+    vrPending = { ok, note ->
+      vrPending = null
+      main.removeCallbacks(onTimeout)
+      main.removeCallbacks(poll)
+      if (ok && vrSession == session) {
+        vrConnectedAt = System.currentTimeMillis()
+        // ⚠️ setCommunicationDevice() は呼ばない（上のクラスコメント参照）。モードだけ立てる。
+        val before = modeName(audioManager.mode)
+        audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+        trace("vr", "mode $before -> ${modeName(audioManager.mode)}")
+        startSessionMonitor(h, session)
+      } else if (vrSession == session) {
+        // 張れなかったら音声認識も止める（インカムを待たせたままにしない）。
+        endSession(h, "start failed: $note")
+      }
+      resolve(ok && vrSession == session, note)
+    }
+    main.postDelayed(onTimeout, timeoutMs.toLong())
+
+    val accepted = runCatching { h.startVoiceRecognition(device) }
+    trace("vr", "startVoiceRecognition(${name(device)}) -> ${accepted.getOrNull()} ${accepted.exceptionOrNull() ?: ""}")
+    if (accepted.getOrDefault(false) != true) {
+      vrPending?.invoke(false, "startVoiceRecognition が ${accepted.exceptionOrNull()?.javaClass?.simpleName ?: "false"} を返した")
+      return
+    }
+    // すでに張れていてイベントが来ない場合に備え、すぐ1回目を見る。
+    main.post(poll)
+  }
+
   // セッション中、SCO が切れたかを見張る（⚠️ ブロードキャストの取りこぼしに備えたポーリング）。
-  private fun startSessionMonitor(h: BluetoothHeadset, device: BluetoothDevice) {
+  // ⚠️ セッション番号が変わったら止まる（古い監視が新しいセッションを誤って終わらせないように）。
+  private fun startSessionMonitor(h: BluetoothHeadset, session: Int) {
     val monitor = object : Runnable {
       override fun run() {
-        if (vrDevice != device) return
-        val connected = runCatching { h.isAudioConnected(device) }.getOrDefault(false)
-        if (!connected) {
-          onScoLost("ポーリングで検知")
+        if (vrSession != session) return
+        val d = vrDevice ?: return
+        if (!runCatching { h.isAudioConnected(d) }.getOrDefault(false)) {
+          onScoLost("ポーリングで検知", session)
         } else {
           main.postDelayed(this, POLL_MS)
         }
@@ -400,17 +423,16 @@ class BtAudioRouteModule : Module() {
   }
 
   // セッション中に SCO が切れた。自分で止めたのでなければ、インカム側の操作（2回目の押下）とみなす。
-  private fun onScoLost(source: String) {
+  private fun onScoLost(source: String, session: Int) {
+    if (vrSession != session) return
     val device = vrDevice ?: return
-    if (vrReleasing) {
-      trace("vr", "sco lost during own release ($source) -> ignore")
-      return
-    }
-    val sessionMs = System.currentTimeMillis() - vrStartedAt
-    val connectedMs = if (vrConnectedAt > 0) System.currentTimeMillis() - vrConnectedAt else -1
-    trace("vr", "sco lost by remote ($source): session=${sessionMs}ms connected=${connectedMs}ms ${snapshot()}")
+    val now = System.currentTimeMillis()
+    val sessionMs = now - vrStartedAt
+    val connectedMs = if (vrConnectedAt > 0) now - vrConnectedAt else -1
     vrDevice = null
+    vrSession++
     runCatching { audioManager.mode = AudioManager.MODE_NORMAL }
+    // ⚠️ 先に知らせる。状態の記録（Bluetooth への問い合わせを含む）は重いので後にする。
     sendEvent(
       "onVoiceRecognitionEnded",
       mapOf(
@@ -421,25 +443,59 @@ class BtAudioRouteModule : Module() {
         "device" to name(device),
       ),
     )
+    trace("vr", "sco lost by remote ($source): session=${sessionMs}ms connected=${connectedMs}ms ${snapshot()}")
   }
 
   private fun stopVoiceRecognition(reason: String) {
     trace("vr", "stop requested: reason=$reason ${snapshot()}")
     vrPending?.invoke(false, "停止が要求された（$reason）")
-    val device = vrDevice
-    val h = headset
-    if (device != null && h != null) {
-      vrReleasing = true
-      val r = runCatching { h.stopVoiceRecognition(device) }
-      trace("vr", "stopVoiceRecognition(${name(device)}) -> ${r.getOrNull()} ${r.exceptionOrNull() ?: ""}")
-      // 切断の通知が遅れて来ても「2回目の押下」と取り違えないよう、しばらく印を残す。
-      main.postDelayed({ vrReleasing = false }, RELEASE_GRACE_MS)
-    }
-    vrDevice = null
+    headset?.let { endSession(it, reason) }
     if (audioManager.mode != AudioManager.MODE_NORMAL) {
       audioManager.mode = AudioManager.MODE_NORMAL
     }
     trace("vr", "stopped: ${snapshot()}")
+  }
+
+  // セッションを終わらせる。⚠️ 番号を進めるので、この後に届く切断の通知・監視は無視される。
+  private fun endSession(h: BluetoothHeadset, reason: String) {
+    val device = vrDevice
+    vrSession++
+    vrDevice = null
+    if (device != null) {
+      val r = runCatching { h.stopVoiceRecognition(device) }
+      trace("vr", "stopVoiceRecognition(${name(device)}) -> ${r.getOrNull()} ${r.exceptionOrNull() ?: ""} ($reason)")
+    }
+  }
+
+  // SCO が切れるのを待つ（前のセッションを止めた直後など）。
+  private fun waitAudioOff(h: BluetoothHeadset, device: BluetoothDevice, timeoutMs: Long, then: (Boolean) -> Unit) {
+    val deadline = System.currentTimeMillis() + timeoutMs
+    val check = object : Runnable {
+      override fun run() {
+        val on = runCatching { h.isAudioConnected(device) }.getOrDefault(false)
+        when {
+          !on -> then(true)
+          System.currentTimeMillis() >= deadline -> then(false)
+          else -> main.postDelayed(this, POLL_MS)
+        }
+      }
+    }
+    check.run()
+  }
+
+  // 見張る機器を選ぶ。⚠️ HFP 機器が複数あるとき、先頭を選ぶと違う機器を見張ってしまう。
+  // いま通話系の出力先（SCO の sink）になっている機器＝HFP のアクティブ機器を優先する。
+  private fun pickDevice(h: BluetoothHeadset): BluetoothDevice? {
+    val devices = h.connectedDevices
+    val activeAddress = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+      audioManager.availableCommunicationDevices.firstOrNull { it.type == SCO_TYPE }?.address
+    } else {
+      null
+    }
+    val active = devices.firstOrNull { it.address == activeAddress }
+    val chosen = active ?: devices.firstOrNull()
+    trace("vr", "connected headsets: ${devices.joinToString { name(it) }} chosen=${chosen?.let { name(it) }} active=${active != null}")
+    return chosen
   }
 
   private fun withHeadset(timeoutMs: Long, block: (BluetoothHeadset?) -> Unit) {
@@ -493,17 +549,28 @@ class BtAudioRouteModule : Module() {
         }
         val text = if (kind == "audio") audioStateName(state) else connStateName(state)
         val prevText = if (kind == "audio") audioStateName(prev) else connStateName(prev)
-        trace("hfp", "$kind: $prevText -> $text device=${device?.let { name(it) }} session=${vrDevice != null} releasing=$vrReleasing")
+        trace("hfp", "$kind: $prevText -> $text device=${device?.let { name(it) }} session=${vrDevice != null}#$vrSession")
         sendEvent(
           "onHeadsetEvent",
           mapOf("kind" to kind, "state" to text, "previous" to prevText, "session" to (vrDevice != null)),
         )
         if (kind != "audio") return
         lastAudioState = state
-        if (state == BluetoothHeadset.STATE_AUDIO_CONNECTED) {
+        val current = vrDevice ?: return
+        if (state == BluetoothHeadset.STATE_AUDIO_CONNECTED && vrPending != null) {
+          // AOSP は要求元の機器に張ることがある（startVoiceRecognition の fall back）。その機器を見張る。
+          if (device != null && device != current) {
+            trace("vr", "sco came up on ${name(device)} instead of ${name(current)} -> follow it")
+            vrDevice = device
+          }
           vrPending?.invoke(true, "確立（ブロードキャストで検知）")
         } else if (state == BluetoothHeadset.STATE_AUDIO_DISCONNECTED && vrPending == null) {
-          onScoLost("ブロードキャストで検知")
+          // ⚠️ 別の HFP 機器（車載器など）の切断を「2回目の押下」と取り違えない。
+          if (device != null && device != current) {
+            trace("vr", "disconnect of another device (${name(device)}) -> ignore")
+            return
+          }
+          onScoLost("ブロードキャストで検知", vrSession)
         }
       }
     }
@@ -550,7 +617,7 @@ class BtAudioRouteModule : Module() {
     val d = vrDevice
     val audio = if (h != null && d != null) runCatching { h.isAudioConnected(d) }.getOrNull() else null
     return "[mode=${modeName(am.mode)} comm=$comm scoOn=${am.isBluetoothScoOn} " +
-      "session=${d != null} audioConnected=$audio releasing=$vrReleasing " +
+      "session=${d != null}#$vrSession audioConnected=$audio " +
       "pending=${vrPending != null} proxy=${h != null} lastAudio=${audioStateName(lastAudioState)}]"
   }
 
@@ -589,11 +656,14 @@ class BtAudioRouteModule : Module() {
 
   private fun trace(tag: String, msg: String) {
     Log.i(TAG, "[$tag] $msg")
-    val line = "${traceTime.format(Date())} [$tag] $msg\n"
+    val at = System.currentTimeMillis()
     val file = traceFile() ?: return
     runCatching {
       traceExecutor.execute {
         runCatching {
+          // ⚠️ 整形はこのスレッドだけで行う（SimpleDateFormat はスレッドセーフでない。
+          // trace はメインスレッドと JS スレッドの両方から呼ばれる）。
+          val line = "${traceTime.format(Date(at))} [$tag] $msg\n"
           if (file.length() > TRACE_MAX_BYTES) {
             file.renameTo(File(file.parentFile, "$TRACE_FILE.1"))
           }
@@ -643,7 +713,7 @@ class BtAudioRouteModule : Module() {
     const val SCO_TYPE = AudioDeviceInfo.TYPE_BLUETOOTH_SCO
     const val PROXY_TIMEOUT_MS = 1_500L
     const val POLL_MS = 200L
-    const val RELEASE_GRACE_MS = 3_000L
+    const val AUDIO_OFF_WAIT_MS = 1_500L
     const val TRACE_FILE = "btroute-trace.log"
     const val TRACE_MAX_BYTES = 2L * 1024 * 1024
   }

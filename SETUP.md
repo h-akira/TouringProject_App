@@ -220,6 +220,15 @@ unzip -p android/app/build/outputs/apk/release/app-release.apk assets/index.andr
 ⚠️ **日本語では検索しない** — Hermesは**UTF-16で格納する**ので `grep` に写らない
 （確かめ方は下記）。
 
+### テスト（純粋な関数だけ）
+
+```sh
+npm test    # Node の組み込みテストランナー（src/**/*.test.ts）
+```
+
+⚠️ **React Native やネイティブモジュールに触れるものは対象外**（Node では動かない）。
+**経路・録音まわりは実機の記録で確かめる**（下記）。
+
 ### 走行後に記録を取り出す
 
 ⚠️ **`adb logcat` は数分で流れる**ので、走行中の出来事は走行後には残っていない。

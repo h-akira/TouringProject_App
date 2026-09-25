@@ -49,7 +49,8 @@
     "gen:api": "openapi-typescript ../docs/02_api_openapi.yaml -o src/api/schema.ts",
     "postinstall": "npm run gen:api",
     "prestart": "npm run gen:api",
-    "typecheck": "npm run gen:api && tsc --noEmit"
+    "typecheck": "npm run gen:api && tsc --noEmit",
+    "test": "node --experimental-strip-types --test 'src/**/*.test.ts'"
   },
   "private": true
 }

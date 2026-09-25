@@ -258,9 +258,14 @@ export default function Index() {
   const recordingRef = useRef(false);
 
   // ⚠️ **録音の開始処理の最中か。** `recordingRef` は録音が始まってから立つので、
-  // それだけだと**開始処理（SCOの確立待ちで最大2秒）の間に2本目がすり抜ける。**
+  // それだけだと**開始処理（経路の確立待ちなどで数秒）の間に2本目がすり抜ける。**
   // 並走すると、後発の `setAudioModeAsync` が先発のSCOを潰す（実機で発生）。
   const startingRef = useRef(false);
+  // 開始処理の途中で「やめて」と言われたか（画面離脱・設定画面へ移る）。
+  // ⚠️ **開始処理は await を挟むので、途中で止めないと録音と経路が取り残される。**
+  const startAbortRef = useRef(false);
+  // 開始処理の途中でインカムの経路が切れたか（購読は開始前から張る。`startRecording`）。
+  const lostDuringStartRef = useRef(false);
 
   // 回答の読み上げ（US-2.02）。URLを差し替えて鳴らすだけなので、
   // プレイヤーは1つを使い回す。
@@ -318,6 +323,13 @@ export default function Index() {
   // ⚠️ **処理済みかどうかはURL文字列ではなく押した時刻で判定する**
   // （`useURL()` は古いURLを遅れて返すことがある。src/api/handsfreeLaunch.ts）。
   const launchUrl = useURL();
+  // 送信時に最新の値を読むための写し（`stopRecordingAndSend` 参照）。
+  const coordsRef = useRef(coords);
+  coordsRef.current = coords;
+  const apiKeyRef = useRef(apiKey);
+  apiKeyRef.current = apiKey;
+  // 最後に「処理済みとして無視した」押下（記録を1回に絞るため）。
+  const lastIgnoredPress = useRef<number | null>(null);
 
   // この一往復がハンズフリー起動から始まったか（US-2.04）。
   // ⚠️ **回答後にマップへ戻すのは、この場合だけ。** 画面から自分で操作した
@@ -603,7 +615,7 @@ export default function Index() {
    * 押し忘れれば上限まで録り続けて**質問ごと失われる**（src/api/voice.ts）。
    * 📌 **通常はインカムのボタンを押して終える**ので、この上限は押し忘れの受け皿。
    */
-  async function startRecording(): Promise<boolean> {
+  async function startRecording(pressedAt: number | null = null): Promise<boolean> {
     // ref で見る。連打されたときも、再レンダーを待たずに2度目を弾ける。
     // ⚠️ **開始処理中も弾く**（`startingRef` 参照）。最初の await より前に立てる。
     if (recordingRef.current || startingRef.current || sending) return false;
@@ -612,22 +624,39 @@ export default function Index() {
       return false;
     }
     startingRef.current = true;
+    startAbortRef.current = false;
+    lostDuringStartRef.current = false;
+    // 開始処理の途中で止められたときの後片付け。
+    const abortStart = async (): Promise<boolean> => {
+      trace("[recording] start aborted");
+      stopWatchingIntercom();
+      await releaseMicRoute("start aborted");
+      await setAudioModeAsync(AUDIO_MODE_PLAYBACK);
+      return false;
+    };
     try {
       const { granted } = await requestRecordingPermissionsAsync();
       if (!granted) {
         setAnswer("エラー: マイクの許可が得られませんでした");
         return false;
       }
+      if (startAbortRef.current) return await abortStart();
       // 録音中は他の音を止める。読み上げの途中で録り始めると自分の声に
       // 回答が被る。
       await setAudioModeAsync(AUDIO_MODE_RECORDING);
+      // ⚠️ **インカムで録るときは、2回目の押下は「経路が切れた」通知として届く**
+      // （Intent は来ない。src/api/micRoute.ts）。⚠️ **経路を張る前に購読する** —
+      // 張ってから購読するまでの間に切れると、通知が失われて2回目の押下を取りこぼす。
+      stopWatchingIntercom();
+      unwatchIntercom.current = watchIntercomEnded(onIntercomEnded);
       // ⚠️ **録音を始める前にインカムの経路を張る**（adr/010）。
       // これが無いと本体マイクで録ってしまい、走行中は風とエンジン音に埋もれる。
       // ⚠️ **失敗しても止めない。** 走行中に録音が始まらない方が致命的なので、
       // 本体マイクで録って続行する（インカム未接続の室内利用も同じ経路）。
-      const route = await acquireMicRoute();
+      const route = await acquireMicRoute(pressedAt);
       micRouteRef.current = route;
       trace("[recording] mic:", describeMicRoute(route));
+      if (route.kind !== "intercom") stopWatchingIntercom();
       // ⚠️ **「インカムはあるのに使えていない」ときだけ知らせる。**
       // **本体マイクで録ると走行中は風とエンジン音に埋もれる**ので、
       // 停車後に気づけるようにしておく（走行中は画面を見られない）。
@@ -636,31 +665,16 @@ export default function Index() {
           ? "⚠️ インカムに接続できず、本体マイクで録音しています"
           : null,
       );
+      if (startAbortRef.current) return await abortStart();
       await recorder.prepareToRecordAsync();
+      if (startAbortRef.current) return await abortStart();
       recorder.record();
       recordingRef.current = true;
       recordingStartedAt.current = Date.now();
       setRecording(true);
       setAnswer(null);
-      // ⚠️ **インカムで録るときは、2回目の押下は「経路が切れた」通知として届く**
-      // （Intent は来ない。src/api/micRoute.ts）。方式C をこの経路でも成立させる。
-      stopWatchingIntercom();
-      if (route.kind === "intercom") {
-        unwatchIntercom.current = watchIntercomEnded((event) => {
-          if (!recordingRef.current) {
-            trace("[handsfree] intercom ended while not recording -> ignore", event);
-            return;
-          }
-          const elapsed = Date.now() - (recordingStartedAt.current ?? 0);
-          // ⚠️ **短すぎる録音は送らない**（方式C の押下と同じ扱い）。
-          if (elapsed < MIN_RECORDING_MS) {
-            trace(`[handsfree] intercom ended too soon (${elapsed}ms) -> ignore`);
-            return;
-          }
-          trace(`[handsfree] intercom ended while recording (${elapsed}ms) -> send`);
-          void stopRecordingAndSend();
-        });
-      }
+      // 開始処理の途中で経路が切れていたら、ここで扱う（本体マイクに落ちている）。
+      if (lostDuringStartRef.current) fallBackToBuiltinMic("経路が開始処理中に切れた");
       // 📌 **実際にどのマイクで録っているか**を残す（録音が始まるまで少し待つ）。
       setTimeout(() => void traceActiveRecording("after start"), 800);
       recordingTimer.current = setTimeout(() => {
@@ -697,6 +711,42 @@ export default function Index() {
     }
   }
 
+  /**
+   * インカム側で経路が切れた（＝2回目の押下）。方式C をこの経路でも成立させる。
+   *
+   * ⚠️ **切れた時点でネイティブ側の経路はもう無い。** 録音は本体マイクで続いているので、
+   * 「短すぎるから無視」にすると**警告も出ずに本体マイクで録り続けてしまう。**
+   */
+  function onIntercomEnded(event: unknown) {
+    if (!recordingRef.current) {
+      if (startingRef.current) {
+        // 購読は開始前から張っているので、開始処理の途中に届くことがある。録音開始後に扱う。
+        trace("[handsfree] intercom ended during start -> handle after start", event);
+        lostDuringStartRef.current = true;
+      } else {
+        trace("[handsfree] intercom ended while not recording -> ignore", event);
+      }
+      return;
+    }
+    const elapsed = Date.now() - (recordingStartedAt.current ?? 0);
+    // ⚠️ **短すぎるときは送らない**（方式C の押下と同じ扱い）。ただし本体マイクへの切替として扱う。
+    // 📌 次の押下は、音声認識が終わっているので `VOICE_COMMAND` として届く。
+    if (elapsed < MIN_RECORDING_MS) {
+      fallBackToBuiltinMic(`経路が録音開始の ${elapsed}ms 後に切れた`);
+      return;
+    }
+    trace(`[handsfree] intercom ended while recording (${elapsed}ms) -> send`);
+    void stopRecordingAndSend();
+  }
+
+  /** 録音中にインカムの経路を失った。⚠️ **本体マイクで録っていることを記録と画面に残す。** */
+  function fallBackToBuiltinMic(note: string) {
+    trace(`[handsfree] ⚠️ lost the intercom route (${note}) -> keep recording on the built-in mic`);
+    stopWatchingIntercom();
+    micRouteRef.current = { kind: "builtin", reason: "acquire-failed", note };
+    setMicWarning("⚠️ インカムとの接続が切れ、本体マイクで録音しています");
+  }
+
   // ハンズフリー起動を受けて自動で録音を始める。
   // ⚠️ **位置情報とAPIキーの両方が揃うのを待つ。** どちらか欠けたまま
   // startRecording を呼んでもエラーで無音に終わるだけ（画面を見ない前提なので
@@ -710,7 +760,12 @@ export default function Index() {
     const claim = claimPress(pressedAt);
     if (claim !== "new") {
       // ⚠️ **古いURLの再送はここで止まる**（src/api/handsfreeLaunch.ts）。
-      trace(`[handsfree] ignore ${claim} press: url=${launchUrl}`);
+      // 📌 **同じ押下は1回だけ記録する** — 位置が更新されるたびにこの effect は走るので、
+      // 毎回書くと記録ファイルが埋まり、肝心の行が押し出される。
+      if (lastIgnoredPress.current !== pressedAt) {
+        lastIgnoredPress.current = pressedAt;
+        trace(`[handsfree] ignore ${claim} press: url=${launchUrl}`);
+      }
       return;
     }
     // ⚠️ **この行が届くこと自体が方式Cの検証になる**（FINDINGS.md §16）。
@@ -752,7 +807,7 @@ export default function Index() {
       // ⚠️ **応答待ちの最中にも押されうる。** その場合 startRecording は
       // `sending` で弾かれるので、**先に前の質問を捨ててはいけない**
       // （捨てたうえに録音も始まらず、押しても完全に無反応になる）。
-      const started = await startRecording();
+      const started = await startRecording(pressedAt);
       if (!started) {
         // ⚠️ **黙って諦めない。** 走行中は画面を見ないので、無反応だと
         // 「押せていない」のか「壊れた」のか区別がつかない。
@@ -790,6 +845,11 @@ export default function Index() {
     // ⚠️ **早期returnより前に止める。** 録音フラグが既に下りていても
     // カウントダウンだけ残っていることがある。
     stopCountdown();
+    // ⚠️ **開始処理の途中なら、止めるよう伝える**（開始処理が await のたびに見る）。
+    if (startingRef.current) {
+      trace("[recording] discard requested during start -> abort");
+      startAbortRef.current = true;
+    }
     if (!recordingRef.current) return;
     recordingRef.current = false;
     recordingStartedAt.current = null;
@@ -878,6 +938,10 @@ export default function Index() {
       launchedHandsFree.current = false;
       return;
     }
+    // ⚠️ **最新の位置とキーを ref から読む。** この関数はタイマーやインカムの通知から
+    // 「録音を始めたときのレンダー」のまま呼ばれるので、state だと録音開始時点の位置で送ってしまう。
+    const coords = coordsRef.current;
+    const apiKey = apiKeyRef.current;
     if (!uri || !coords || !apiKey || !API_BASE_URL) {
       setAnswer("エラー: 録音を送信できませんでした");
       launchedHandsFree.current = false;
@@ -1201,7 +1265,7 @@ export default function Index() {
               recording && styles.voiceButtonRecording,
               sending && styles.voiceButtonDisabled,
             ]}
-            onPress={recording ? stopRecordingAndSend : startRecording}
+            onPress={recording ? () => void stopRecordingAndSend() : () => void startRecording()}
             disabled={sending}
           >
             <Text style={styles.voiceButtonText}>

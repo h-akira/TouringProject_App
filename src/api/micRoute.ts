@@ -34,11 +34,21 @@ import { trace } from "@/api/trace";
 /**
  * ⚠️ **SCO の確立を待つ上限。**
  *
- * **仮想通話では 270〜955ms で張れた**（Pixel 8a）。⚠️ **音声認識での値は未実測**なので、
- * **検証中は長めに取る**（⚠️ **走行中はボタンを押してから録音が始まるまでの遅延になる**。
- * 実測できたら詰める）。
+ * **音声認識では 217〜274ms で張れた**（Pixel 8a・インカムの電源を入れた直後も含む）。
+ * ⚠️ **走行中はボタンを押してから録音が始まるまでの遅延になる**ので、待ちすぎない
+ * （張れなければ本体マイクで録って続行する）。
  */
-const ACQUIRE_TIMEOUT_MS = 4_000;
+const ACQUIRE_TIMEOUT_MS = 2_000;
+
+/**
+ * ⚠️ **ボタンの押下から `startVoiceRecognition` を呼ぶまでの期限。**
+ *
+ * インカムは押下のあと返事を待ち、**スマホは約5秒で待ちを打ち切る**
+ * （AOSP `HeadsetService.sStartVrTimeoutMs`）。過ぎてから呼ぶと「スマホ側から始める音声認識」に
+ * なり、成り立つかは未確認。**超えたかどうかを記録に残す**（アプリが起動していない状態からの押下で
+ * 位置情報の初回取得を待つと超えうる）。
+ */
+const VR_ANSWER_DEADLINE_MS = 5_000;
 
 /** どのマイクで録ることになったか。⚠️ **送信結果と一緒に残す。** */
 export type MicRoute =
@@ -55,10 +65,10 @@ export type MicRoute =
  * ⚠️ **例外を投げない。** **走行中に録音が始まらないことの方が致命的**なので、
  * **失敗しても「本体マイクで録る」という結果を返して続行させる。**
  */
-export async function acquireMicRoute(): Promise<MicRoute> {
+export async function acquireMicRoute(pressedAt: number | null): Promise<MicRoute> {
   try {
     // ⚠️ **`BLUETOOTH_CONNECT` が要る**（Android 12+）。
-    // **宣言だけでは足りず、実行時に求めないと `setCommunicationDevice()` は効かない。**
+    // **宣言だけでは足りず、実行時に求めないと `BluetoothHeadset` を使えない。**
     // 📌 **拒否されても止めない** — **本体マイクで録れば会話は成立する。**
     if (Platform.OS === "android") {
       const granted = await PermissionsAndroid.request(
@@ -82,6 +92,13 @@ export async function acquireMicRoute(): Promise<MicRoute> {
       return { kind: "builtin", reason: "no-intercom" };
     }
 
+    if (pressedAt !== null) {
+      const sincePress = Date.now() - pressedAt;
+      trace(
+        `[mic] press -> startVoiceRecognition: ${sincePress}ms` +
+          (sincePress > VR_ANSWER_DEADLINE_MS ? " ⚠️ over the ~5s answer deadline" : ""),
+      );
+    }
     const result = await BtAudioRoute.startVoiceRecognition(ACQUIRE_TIMEOUT_MS);
     trace("[mic] startVoiceRecognition:", result);
     if (result.ok) {
