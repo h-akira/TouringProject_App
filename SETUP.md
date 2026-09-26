@@ -299,6 +299,9 @@ release APKには**含まれない**ことを確認済み（Metroでの開発に
 | 署名 | debug鍵でよい | ⚠️ **upload key が必須** |
 | ABI | `arm64-v8a` だけ | ⚠️ **全ABI**（配る相手の端末を選べない） |
 
+📌 **ふだんの配信はタグの push で済む**（下の「5. アップロード」）。
+**以下の 1〜4 は、手元で AAB を作るとき**（CI が使えないときの逃げ道）の手順。
+
 ### 1. 署名鍵を作る（初回だけ・⚠️ 不可逆）
 
 ⚠️ **リポジトリの中に作らないこと。** リポジトリを消すと鍵まで消える。
@@ -374,8 +377,26 @@ grep versionCode android/app/build.gradle
 
 ### 5. アップロード
 
-⚠️ **初回だけは Play Console の画面から手で上げる**
-（Play Developer API は**既に存在するアプリしか更新できない**）。
+📌 **`v*` タグを push すると、GitHub Actions がビルド・署名して内部テストに上げる**
+（`.github/workflows/play-release.yml`）。
+
+```sh
+# version を上げてコミットしたあと（タグ名は v + app.json の version）
+git tag -a v1.42.0 -m "<何が動くようになったか>"
+git push && git push origin v1.42.0
+```
+
+- ⚠️ **タグと `app.json` の `version` が違うと、ビルド前に止まる**（`versionCode` の取り違えを防ぐため）
+- ⚠️ **debug 鍵で署名された AAB・全ABIでない AAB・API の URL が入っていない AAB は、上げる前に止まる**（上の「4. 確かめること」と同じ検査＋URL）
+- ⚠️ **タグは1つずつ push する**（`git push --tags` で一度に4つ以上上がると、GitHub がイベントを作らず**黙って走らない**）
+- 📌 **API の URL（`EXPO_PUBLIC_API_BASE_URL`）も Environment `play` の Secret**（手元では `.env` から入る）
+- 📌 **CI は `npm run bundle:aab` を呼ぶ。** `bundle:play` は `.env` を読んでからこれを呼ぶだけ。
+  ⚠️ **`bundle:aab` は鍵の環境変数が無いと止まる**（黙って debug 署名にしない）
+- 📌 **鍵と Play の鍵（サービスアカウント）は GitHub の Environment `play` にあり、`v*` タグからしか読めない。**
+  準備の手順は [pre-research/play-cicd/SETUP.md](https://github.com/h-akira/TouringProject/blob/main/pre-research/play-cicd/SETUP.md)
+
+⚠️ **初回だけは Play Console の画面から手で上げる必要があった**
+（Play Developer API は**既に存在するアプリしか更新できない**）。**2026-09-13 に済んでいる。**
 
 ⚠️ **AABは実機に直接インストールできない。** 手元で動作確認するなら
 **上の release APK を使う**か、内部テストに上げてPlay経由で入れる。
