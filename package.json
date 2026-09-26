@@ -46,7 +46,7 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "gen:api": "openapi-typescript ../docs/02_api_openapi.yaml -o src/api/schema.ts",
+    "gen:api": "openapi-typescript src/api/openapi.yaml -o src/api/schema.ts",
     "postinstall": "npm run gen:api",
     "prestart": "npm run gen:api",
     "typecheck": "npm run gen:api && tsc --noEmit",

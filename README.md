@@ -128,6 +128,7 @@ App/
       recordingSettings.ts  録音の設定の保管（AsyncStorage）
       returnApp.ts      応答後に戻るアプリの保管（AsyncStorage）
       types.ts          APIの型のエイリアス
+      openapi.yaml      API契約の写し（正本は親の docs/02。手で編集しない）
       schema.ts         ⚠️ 自動生成。手で編集しない（gitignore）
 ```
 
@@ -137,12 +138,15 @@ App/
 
 **正本は [docs/02_api_openapi.yaml](https://github.com/h-akira/TouringProject/blob/main/docs/02_api_openapi.yaml)**（フロント↔バックの契約）。
 
+📌 **このリポジトリには、その写しを `src/api/openapi.yaml` として置いている**（単体でクローンしても型を生成できるように）。
+
 ```sh
-npm run gen:api   # docs/02 → src/api/schema.ts
+npm run gen:api   # src/api/openapi.yaml → src/api/schema.ts
 ```
 
 📌 **`postinstall` と `prestart` で自動的に走る**ので、普段は意識しなくてよい。
-⚠️ **契約を変えたら `docs/02` 側を直す。** `schema.ts` を手で編集しても次の生成で消える。
+⚠️ **契約を変えたら親の `docs/02` 側を直し、親の `scripts/sync-openapi.sh` で写しを更新する。**
+**`openapi.yaml` も `schema.ts` も手で編集しない**（写しは次のコピーで、`schema.ts` は次の生成で消える）。
 
 ## やらないこと
 

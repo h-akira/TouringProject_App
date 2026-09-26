@@ -1,0 +1,62 @@
+name: play-api-check
+
+# Read-only check that the service account can reach the Play Developer API.
+# The "play" environment only hands out its secrets to v* tags, so run it on one:
+#   gh workflow run play-api-check.yml --ref v1.41.0
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    environment: play
+    timeout-minutes: 5
+    steps:
+      - name: Install Google client libraries
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet google-auth==2.58.1 requests==2.34.2
+
+      - name: List tracks through a throwaway edit
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          "$RUNNER_TEMP/venv/bin/python" - <<'EOF'
+          import json
+          import os
+          import sys
+
+          from google.auth.transport.requests import AuthorizedSession
+          from google.oauth2 import service_account
+
+          PACKAGE = "com.touringproject.app"
+          BASE = f"https://androidpublisher.googleapis.com/androidpublisher/v3/applications/{PACKAGE}"
+
+          info = json.loads(os.environ["PLAY_SERVICE_ACCOUNT_JSON"])
+          creds = service_account.Credentials.from_service_account_info(
+              info, scopes=["https://www.googleapis.com/auth/androidpublisher"]
+          )
+          session = AuthorizedSession(creds)
+
+          # An edit is a draft transaction. It is deleted below and never committed,
+          # so nothing on Play changes.
+          res = session.post(f"{BASE}/edits")
+          if not res.ok:
+              print(f"edits.insert failed: {res.status_code} {res.text}")
+              sys.exit(1)
+          edit_id = res.json()["id"]
+
+          try:
+              res = session.get(f"{BASE}/edits/{edit_id}/tracks")
+              if not res.ok:
+                  print(f"edits.tracks.list failed: {res.status_code} {res.text}")
+                  sys.exit(1)
+              for track in res.json().get("tracks", []):
+                  for release in track.get("releases", []):
+                      print(track["track"], release.get("status"), release.get("versionCodes"))
+          finally:
+              session.delete(f"{BASE}/edits/{edit_id}")
+          EOF
