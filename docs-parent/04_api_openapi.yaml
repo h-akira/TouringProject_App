@@ -8,7 +8,7 @@ info:
     frontend fetch types and as documentation). It is kept as a standalone
     spec for now; it is NOT yet wired into API Gateway's DefinitionBody.
     Wiring it in (for request validation) can come later once the shape is
-    stable. See 01_architecture.md.
+    stable. See 03_units_contracts.md UC-4.
 
 servers:
   # The base URL is environment-specific and injected in the app via
@@ -90,8 +90,8 @@ paths:
             The API key is missing or wrong.
 
             ⚠️ API Gateway also returns 403 - not 404 - for a path that is not
-            deployed, so this status does not prove the key is at fault. See
-            Backend/README.md for telling the two apart.
+            deployed, so this status does not prove the key is at fault. GET
+            /health needs no key, so a 200 there means the API itself is up.
           content:
             application/json:
               schema:
@@ -124,7 +124,7 @@ paths:
         Transcription happens here rather than in the app so that the audio
         passes through a Lambda that can check it first: the payload size caps
         how long a recording may be, which is the only place that limit can be
-        enforced (01_architecture.md section 7). It also means the app needs no
+        enforced (03_units_contracts.md UC-4). It also means the app needs no
         AWS credentials - the API key is enough.
 
         ⚠️ Expect this to take longer than POST /ask: transcription runs as a
@@ -275,7 +275,7 @@ components:
       name: x-api-key
       description: >
         Per-device API key, issued when the stack is deployed and typed into
-        the app's settings screen (docs/01_architecture.md section 8). It is
+        the app's settings screen (03_units_contracts.md UC-4). It is
         stored with expo-secure-store, never in the bundle: EXPO_PUBLIC_ vars
         are embedded in plain text, so they cannot hold a secret.
 
@@ -371,7 +371,7 @@ components:
             ⚠️ Transcribe recommends FLAC or WAV, but Android's recorder emits
             neither; M4A is where what the device can produce and what batch
             Transcribe accepts overlap, so nothing has to transcode
-            (01_architecture.md section 7).
+            (03_units_contracts.md UC-4).
 
             The size limit is what bounds recording length - a question runs a
             few seconds to a dozen, tens of KB at this encoding, so the cap sits

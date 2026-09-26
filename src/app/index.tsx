@@ -60,7 +60,7 @@ const APP_VERSION = Constants.expoConfig?.version ?? "?";
 // Backend base URL from the environment (.env -> EXPO_PUBLIC_API_BASE_URL).
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL;
 
-// 回答待ちのポーリング設定（docs/01a）。
+// 回答待ちのポーリング設定（docs-parent/03_units_contracts.md UC-4）。
 // テキストは実測10〜13秒なので大半は最初の帯（1秒間隔）で終わる。
 // ⚠️ **音声はここに文字起こしのぶんが乗る**（実測15〜20秒）。バッチの
 // ジョブ待ちが入ると更に伸びうるので、打ち切りは音声を基準にしてある。
@@ -221,7 +221,7 @@ export default function Index() {
 
   // 会話を続けるためのセッションID。サーバーが発行した値を保持して次回送る。
   // 要件は「一問一答＋α」で、アプリを再起動してまで続ける想定はないため
-  // 端末に永続化はせずメモリ上だけで持つ（docs/00 の会話継続の方針）。
+  // 端末に永続化はせずメモリ上だけで持つ（docs-parent/00_user_stories.md §5 の会話継続の方針）。
   // ref ではなく state にしているのは、値の有無で画面表示を変えるため。
   const [sessionId, setSessionId] = useState<string | null>(null);
 
@@ -231,7 +231,7 @@ export default function Index() {
 
   // 会話を始めた時刻。経過時間をサーバーに伝えるために持つ。
   // 走行中は質問ごとに場所が変わるので、AIが「さっきの山」を解釈するには
-  // 「前の質問からどれだけ経ったか」が要る（docs/01b）。
+  // 「前の質問からどれだけ経ったか」が要る（docs/01_architecture.md §10）。
   const conversationStartedAt = useRef<number | null>(null);
 
   // 進行方向を出すための位置履歴（US-2.03）。直近2分ぶんだけ持つ。
@@ -244,7 +244,7 @@ export default function Index() {
   // サーバーに送るのはあくまで座標2点（方位はLambdaが計算し直す）。
   const [heading, setHeading] = useState<number | null>(null);
 
-  // 端末に保存されたAPIキー（docs/01 §8）。未設定なら null。
+  // 端末に保存されたAPIキー（docs-parent/03_units_contracts.md UC-4）。未設定なら null。
   // ⚠️ 保管は expo-secure-store で、.env には置かない（src/api/apiKey.ts）。
   const [apiKey, setApiKey] = useState<string | null>(null);
 
@@ -277,10 +277,10 @@ export default function Index() {
   const recordingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 録音を始めた時刻。⚠️ **短すぎる録音を弾く**ために使う
-  // （インカムのボタンのチャタリング対策。adr/008）。
+  // （インカムのボタンのチャタリング対策。adr/003）。
   const recordingStartedAt = useRef<number | null>(null);
 
-  // ⚠️ **どのマイクで録ったか**（adr/010）。
+  // ⚠️ **どのマイクで録ったか**（adr/005）。
   // 📌 **「インカムで録れているつもりが本体マイクだった」を二度と起こさない**ため、
   // 録音ごとに残す。⚠️ **実際これが無くて走行1回分を誤認した。**
   const micRouteRef = useRef<MicRoute | null>(null);
@@ -313,13 +313,13 @@ export default function Index() {
   // 声で質問するための録音（US-2.01）。形式は M4A（src/api/voice.ts）。
   // ⚠️ **`audioSource` が設定で変わる**ので、保存済みの設定から組み立てる。
   // `useAudioRecorder` は options が変われば録音オブジェクトを作り直すため、
-  // 設定画面で変えた値がそのまま効く（FINDINGS.md §12）。
+  // 設定画面で変えた値がそのまま効く（docs/01_architecture.md §3）。
   const recorder = useAudioRecorder(recordingOptions(settings));
 
   // ハンズフリー起動（US-2.04）。インカムのボタンを押すと、Bluetoothスタックが
   // 送る ACTION_VOICE_COMMAND を MainActivity（ネイティブ側）が deep link に
-  // 読み替えてアプリを開く（`adr/006`）。⚠️ **「起動経路をつなぐだけ」**の
-  // 方針どおり、ここでは既存の録音開始処理を呼ぶだけにする（`pre-research/handsfree/`）。
+  // 読み替えてアプリを開く（`adr/001`）。⚠️ **「起動経路をつなぐだけ」**の
+  // 方針どおり、ここでは既存の録音開始処理を呼ぶだけにする（`docs/01_architecture.md` §2）。
   // ⚠️ **処理済みかどうかはURL文字列ではなく押した時刻で判定する**
   // （`useURL()` は古いURLを遅れて返すことがある。src/api/handsfreeLaunch.ts）。
   const launchUrl = useURL();
@@ -388,7 +388,7 @@ export default function Index() {
   // 押せなくなるのを防ぐ。実機で発生した問題。
   const insets = useSafeAreaInsets();
 
-  // 起動中は位置を監視し続ける（learning/05, 06）。
+  // 起動中は位置を監視し続ける。
   // 1点だけでは「どちらを向いているか」が分からないため、US-2.03 では
   // getCurrentPositionAsync（1回だけ）ではなく watchPositionAsync を使う。
   useEffect(() => {
@@ -580,7 +580,7 @@ export default function Index() {
   }
 
   /**
-   * 自動送信までの残り秒数を数える（adr/008・方式D）。
+   * 自動送信までの残り秒数を数える（adr/003・方式D）。
    *
    * ⚠️ **これが「あと何秒で送られるか」の唯一の手がかり。**
    * ボタンを押さずに待つときは、この数字を見て判断する。
@@ -649,7 +649,7 @@ export default function Index() {
       // 張ってから購読するまでの間に切れると、通知が失われて2回目の押下を取りこぼす。
       stopWatchingIntercom();
       unwatchIntercom.current = watchIntercomEnded(onIntercomEnded);
-      // ⚠️ **録音を始める前にインカムの経路を張る**（adr/010）。
+      // ⚠️ **録音を始める前にインカムの経路を張る**（adr/005）。
       // これが無いと本体マイクで録ってしまい、走行中は風とエンジン音に埋もれる。
       // ⚠️ **失敗しても止めない。** 走行中に録音が始まらない方が致命的なので、
       // 本体マイクで録って続行する（インカム未接続の室内利用も同じ経路）。
@@ -680,7 +680,7 @@ export default function Index() {
       recordingTimer.current = setTimeout(() => {
         // 上限に達した。⚠️ **必ず送る。**
         // 押し忘れかもしれないし、長い質問かもしれないが、
-        // **どちらにせよ捨てると質問ごと失われる**（adr/008）。
+        // **どちらにせよ捨てると質問ごと失われる**（adr/003）。
         trace("[recording] max reached -> send");
         void stopRecordingAndSend();
       }, settingsRef.current.maxRecordingMs);
@@ -768,7 +768,7 @@ export default function Index() {
       }
       return;
     }
-    // ⚠️ **この行が届くこと自体が方式Cの検証になる**（FINDINGS.md §16）。
+    // ⚠️ **この行が届くこと自体が方式Cの検証になる**（https://github.com/h-akira/TouringProject_Research/blob/main/handsfree/FINDINGS.md §16）。
     // マイクを掴んでいる最中に Bluetooth スタックが VOICE_COMMAND を
     // 送るかは端末・インカム側の挙動で、コードからは判断できない。
     trace(
@@ -778,7 +778,7 @@ export default function Index() {
     void (async () => {
       // 方式C: **録音中にもう一度押されたら「話し終えた」とみなして送る**
       // （US-2.04の終了側。⚠️ **音量では終話を判定できない**ので、
-      // 音を一切見ないこの経路で終える。adr/008）。
+      // 音を一切見ないこの経路で終える。adr/003）。
       // ⚠️ **startRecording より前に見る。** あちらは `recordingRef` で
       // 弾くので、ここを通さないと「いま応答中です」と読み上げてしまう。
       if (recordingRef.current) {
@@ -820,7 +820,7 @@ export default function Index() {
       // ⚠️ **録音が始まってから前の質問を捨てる。** 順序を逆にすると、
       // 上の早期returnの経路で**前の回答だけが失われる。**
       // 残すと、新しく話し終えたときに**前の質問の答えが返ってくる**
-      // （実機で発生した。FINDINGS.md §13.8）。
+      // （実機で発生した。adr/002）。
       pollAbort.current = true;
       // この一往復の出口は「マップへ戻る」。画面操作で始めたときと区別する。
       launchedHandsFree.current = true;
@@ -919,7 +919,7 @@ export default function Index() {
       await recorder.stop();
       uri = recorder.uri;
       // ⚠️ **経路を必ず解放する。** 立てっぱなしだと通話用のモードが残り、
-      // **読み上げが通話経路に流れる**（adr/010）。
+      // **読み上げが通話経路に流れる**（adr/005）。
       await releaseMicRoute("send");
       // 録り終えたら再生できる状態に戻す（読み上げがここで鳴る）。
       await setAudioModeAsync(AUDIO_MODE_PLAYBACK);
@@ -977,7 +977,7 @@ export default function Index() {
       // state=LAST を実機で確認）、**JSが凍結してポーリングが止まる。**
       // 症状は「初回の回答が来ず、次にボタンを押すと前回の答えが返る」。
       // ⚠️ **フォアグラウンドサービスを持たない限り、背面では待てない**
-      // （pre-research/handsfree/FINDINGS.md §13.8）。
+      // （adr/002）。
       const result = await pollForAnswer(accepted.requestId, apiKey);
       if (result !== null) {
         setAnswer(result.text);
@@ -1051,9 +1051,9 @@ export default function Index() {
    * （AudioModule.kt の `OnActivityEntersBackground`）。
    *
    * ⚠️ **`moveTaskToBack` は使わない。** 自分のタスクを下げるだけで
-   * **ホーム画面に落ちる**と実機で確定した（FINDINGS.md §13.4）。
+   * **ホーム画面に落ちる**と実機で確定した（adr/002）。
    * 代わりに**戻り先アプリを開く**。⚠️ これは起動し直しではなく
-   * **既存タスクの再開**なので、案内中のルートは壊れない（同 §13.5）。
+   * **既存タスクの再開**なので、案内中のルートは壊れない（同）。
    *
    * ⚠️ **一度戻したらフラグを倒す。** 倒さないと、次に画面から操作したときにも
    * 勝手に引っ込む。次のハンズフリー起動でまた立つ。
@@ -1087,7 +1087,7 @@ export default function Index() {
   /**
    * 回答ができるまで GET /ask/{id} を叩く。
    *
-   * ⚠️ **必ず止まる**ことが重要（docs/01a）:
+   * ⚠️ **必ず止まる**ことが重要（docs-parent/03_units_contracts.md UC-4）:
    *   - done / error になったら止める
    *   - 80秒で打ち切る
    *   - 画面を離れたら止める（pollAbort が立つ）
@@ -1320,8 +1320,8 @@ export default function Index() {
               {sending ? "考えています…" : "質問する"}
             </Text>
           </Pressable>
-          {/* 初回はコンテナ起動で10秒前後かかる（pre-research/voice/ §6）。
-              回答ができるまで裏で取りに行っている（docs/01a）。 */}
+          {/* 初回はコンテナ起動で10秒前後かかる（docs-parent/01_technical_policies.md §6）。
+              回答ができるまで裏で取りに行っている（docs-parent/03_units_contracts.md UC-4）。 */}
           {sending && (
             <Text style={styles.note}>
               回答を待っています（最初の質問は10秒ほど）
@@ -1416,7 +1416,7 @@ const styles = StyleSheet.create({
   voiceButtonDisabled: { backgroundColor: "#8A5A44" },
   voiceButtonText: { color: "#FFFFFF", fontSize: 22, fontWeight: "bold" },
   /**
-   * 自動送信までの残り秒数（adr/008・方式D）。
+   * 自動送信までの残り秒数（adr/003・方式D）。
    *
    * ⚠️ **走行中に一瞬の視線で読めることが要件**なので、
    * **画面で最も大きい文字**にする（ボタンの文字が22px）。

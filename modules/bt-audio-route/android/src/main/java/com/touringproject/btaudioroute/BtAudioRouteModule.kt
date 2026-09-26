@@ -40,7 +40,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 //
 // 渡しても例外は出ず false が返るだけで、expo-audio はその戻り値を捨てている。
 // 結果、アプリ側にエラーが一切見えないまま SCO が張られず、録音は全サンプル0の
-// 無音になっていた（pre-research/mic-routing/）。
+// 無音になっていた（adr/005）。
 //
 // ## この方式が正しいことの裏づけ
 //
@@ -63,7 +63,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 // ボタンを押すとインカムは AT+BVRA=1（音声認識を始めて）を送り、スマホの返事を約5秒待つ。
 // その間に acquireSco（仮想通話）で張ろうとすると、インカムは codec 交渉に応じず失敗する。
 // さらに仮想通話の最中はインカムのボタンが「電話を切る」になり、2回目の押下が
-// アプリに届かない（pre-research/mic-routing/FINDINGS.md §9・§10）。
+// アプリに届かない（adr/005。実測は https://github.com/h-akira/TouringProject_Research/blob/main/mic-routing/FINDINGS.md §9・§10）。
 //
 // そこで BluetoothHeadset.startVoiceRecognition() でボタンの要求に正式に返事をし、
 // Bluetooth スタック自身に SCO を張らせる。⚠️ このとき setCommunicationDevice() は呼ばない:

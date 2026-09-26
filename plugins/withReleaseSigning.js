@@ -7,7 +7,7 @@ const { withAppBuildGradle } = require("@expo/config-plugins");
 // ⚠️ **debug鍵で署名したものをPlayは受け付けない。**
 //
 // 📌 **鍵の原本はリポジトリの外**（`~/.keystore/`）に置き、
-// **場所とパスワードは `App/.env`（gitignore済）から渡す**（`adr/009`）。
+// **場所とパスワードは `App/.env`（gitignore済）から渡す**（`adr/004`）。
 // ⚠️ **鍵もパスワードも絶対にコミットしないこと。**
 //
 // ⚠️ **パスワードを `build.gradle` に埋め込まない。**

@@ -1,5 +1,5 @@
 /**
- * APIキーの保管と読み出し（docs/01_architecture.md §8）。
+ * APIキーの保管と読み出し（docs-parent/03_units_contracts.md UC-4）。
  *
  * ⚠️ **キーはソースにも .env にも置かない。**
  * `EXPO_PUBLIC_*` はバンドルに平文で埋め込まれるため、秘密の置き場にならない

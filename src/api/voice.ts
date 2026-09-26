@@ -1,9 +1,9 @@
 /**
- * 声で質問するための録音設定と送信（US-2.01 / US-2.02、docs/01 §7）。
+ * 声で質問するための録音設定と送信（US-2.01 / US-2.02、docs-parent/03_units_contracts.md UC-4）。
  *
  * ⚠️ **アプリは録音して送るだけ。** STT/TTS はバックエンドが呼ぶ。
  * 音声が Lambda を通るので「録音は何秒まで」を手前で強制できる
- * （アプリ側の上限は目安で、**本当の関門はサーバー側**。adr/002）。
+ * （アプリ側の上限は目安で、**本当の関門はサーバー側**。docs-parent/03_units_contracts.md UC-4）。
  */
 import { RecordingPresets, type RecordingOptions } from "expo-audio";
 import { API_KEY_HEADER } from "@/api/apiKey";
@@ -15,7 +15,7 @@ import type { RecordingSettings } from "@/api/recordingSettings";
  *
  * ⚠️ **Transcribe の推奨は FLAC / WAV だが、Androidの録音APIはどちらも出せない**
  * （`AndroidOutputFormat` に該当する値が無い）。両者が重なるのが M4A で、
- * `HIGH_QUALITY` プリセットの既定でもあるため**変換が要らない**（docs/01 §7）。
+ * `HIGH_QUALITY` プリセットの既定でもあるため**変換が要らない**（docs-parent/03_units_contracts.md UC-4）。
  *
  * プリセットから変えているのは2点だけ:
  *   - **モノラル**: 音声認識にステレオは要らず、素直に半分のサイズになる
@@ -24,7 +24,7 @@ import type { RecordingSettings } from "@/api/recordingSettings";
  *
  * ⚠️ **`audioSource` は設定から渡す**（`RecordingSettings.audioSource`）。
  * **端末側の音の加工（ノイズ除去）が変わる**ため、選べるようにしてある。
- * 📌 実測では `voice_communication` が最もノイズを除けた（FINDINGS.md §15）。
+ * 📌 実測では `voice_communication` が最もノイズを除けた（https://github.com/h-akira/TouringProject_Research/blob/main/handsfree/FINDINGS.md §15）。
  * ⚠️ **置き場所は `android` の下**（Android専用の設定なので）。
  *
  * 📌 **`useAudioRecorder` は options を `JSON.stringify` して比較し、
@@ -92,7 +92,7 @@ export const AUDIO_MODE_PLAYBACK = {
 } as const;
 
 /**
- * ボタン再押しで録音を終えられるようになるまでの時間（adr/008）。
+ * ボタン再押しで録音を終えられるようになるまでの時間（adr/003）。
  *
  * ⚠️ **インカムのボタンのチャタリングや、起動の押下が二重に届いた場合に
  * 空の録音を送ってしまうのを防ぐ。** 課金されるうえ、意味不明な回答が返る。
@@ -127,7 +127,7 @@ export type VoiceLocation = {
  * ＝ 呼び出し側は `GET /ask/{requestId}` を今までどおりポーリングすればよい。
  *
  * ⚠️ **multipart で送る。** base64 にすると 1.33 倍に膨らみ、
- * その上限が録音の長さの上限でもあるため（docs/02）。
+ * その上限が録音の長さの上限でもあるため（docs-parent/03_units_contracts.md UC-4）。
  * `fetch` の FormData に `{uri, name, type}` を渡すのは React Native の作法で、
  * ファイルの中身は端末側が読む（JS側にバイト列を載せない）。
  */

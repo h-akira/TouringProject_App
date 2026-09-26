@@ -7,7 +7,7 @@ const fs = require("fs");
 const path = require("path");
 
 // US-2.04: インカムのボタンで自アプリが起動できるようにする。
-// 方式・却下案は pre-research/handsfree/DECISION.md、実測は同 FINDINGS.md。
+// 方式・却下案は adr/001、実測は https://github.com/h-akira/TouringProject_Research/blob/main/handsfree/FINDINGS.md。
 //
 // ⚠️ **当初は `VoiceInteractionService`（Androidの既定アシスタントRole）で
 // 実装していたが、実機で成立しないと判明した。** インカムのボタンは
@@ -15,7 +15,7 @@ const path = require("path");
 // `Intent.ACTION_VOICE_COMMAND` を発行する経路で、これは
 // **Activityのintent-filterで受ける**必要がある（`VoiceInteractionService`
 // では受けられない）。Alexa（`com.amazon.dee.app/.../VoiceCommandActivity`）も
-// 同じintent-filterを持って初めて選択候補に出ていた（FINDINGS.md §11）。
+// 同じintent-filterを持って初めて選択候補に出ていた（adr/001）。
 //
 // expo prebuild は android/ を丸ごと作り直すので、この変更はここに書く。
 // 手で android/AndroidManifest.xml を編集しても prebuild --clean で消える。
@@ -80,7 +80,7 @@ class MainActivity : ReactActivity() {
   }
 
   // US-2.04: インカムのボタンは ACTION_VOICE_COMMAND で本Activityを起動する
-  // （pre-research/handsfree/FINDINGS.md §11）。アプリが既に起動していると
+  // （adr/001）。アプリが既に起動していると
   // onCreate ではなく onNewIntent が呼ばれるので、両方で拾う。
   override fun onNewIntent(intent: Intent) {
     redirectVoiceCommandToAutoRecord(intent)
@@ -165,7 +165,7 @@ const withVoiceCommandMainActivity = (config) => {
 // `<queries>` を宣言しないと `queryIntentActivities` が空を返し、
 // 「戻り先アプリ」の一覧が作れない。
 // ⚠️ **`QUERY_ALL_PACKAGES` は使わない。** Google Play の審査対象になる強い権限で、
-// ここでは**ランチャーに出るアプリが見えれば足りる**（adr/007「影響」）。
+// ここでは**ランチャーに出るアプリが見えれば足りる**（adr/002「影響」）。
 const withLauncherQueries = (config) => {
   return withAndroidManifest(config, (config) => {
     const manifest = config.modResults.manifest;

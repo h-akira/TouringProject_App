@@ -32,7 +32,7 @@ yarn-error.*
 
 # local env files
 .env*.local
-# ⚠️ .env holds the upload keystore passwords (adr/009). Until the split it was
+# ⚠️ .env holds the upload keystore passwords (adr/004). Until the split it was
 # only excluded by the parent repository's .gitignore.
 .env
 .env.*
@@ -41,7 +41,7 @@ yarn-error.*
 # Build output of the local native modules (modules/*/android/build/)
 build/
 
-# OpenAPI から生成する型。正本は親リポジトリの docs/02_api_openapi.yaml。
+# OpenAPI から生成する型。元は docs-parent/04_api_openapi.yaml（親リポジトリの docs/ の写し）。
 # ⚠️ 生成を忘れると tsc が通らないので、npm の postinstall / prestart で
 # 自動生成するようにしてある（package.json）。手で叩くなら `npm run gen:api`。
 src/api/schema.ts

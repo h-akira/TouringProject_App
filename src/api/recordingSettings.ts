@@ -11,7 +11,7 @@
  *
  * 📌 **かつては無音検知（VAD）の閾値もここにあったが、廃止した。**
  * **走行中はエンジン音で音量が飽和して成立しない**ため
- * （[adr/008](../../../adr/008_end_of_speech_detection.md)）。
+ * （adr/003_end_of_speech_detection.md）。
  * いまの終話はインカムのボタン再押しと、下記の上限で決まる。
  */
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -32,7 +32,7 @@ export type RecordingSettings = {
    *
    * ⚠️ **押し忘れの出口であり、「押さずに待つ」ときの待ち時間でもある。**
    * インカムのボタンを2回目に押せば即座に送れるが、**押すのが面倒なときは
-   * これを待つ**ことになる（adr/008）。
+   * これを待つ**ことになる（adr/003）。
    */
   maxRecordingMs: number;
 
@@ -41,7 +41,7 @@ export type RecordingSettings = {
    *
    * ⚠️ **端末側の音の加工（ノイズ除去）が変わる。**
    * 📌 実測で `voice_communication` が4種中もっともノイズを除けた
-   * （`pre-research/handsfree/FINDINGS.md` §15）。
+   * （https://github.com/h-akira/TouringProject_Research/blob/main/handsfree/FINDINGS.md §15）。
    */
   audioSource: RecordingSource;
 };
@@ -101,7 +101,7 @@ export const DEFAULT_RECORDING_SETTINGS: RecordingSettings = {
   maxRecordingMs: envNumber(process.env.EXPO_PUBLIC_MAX_RECORDING_MS, 20_000),
   /**
    * ⚠️ **既定は `voice_communication`。** 4種の実測でノイズ除去が最も効いた
-   * （FINDINGS.md §15）。
+   * （https://github.com/h-akira/TouringProject_Research/blob/main/handsfree/FINDINGS.md §15）。
    */
   audioSource: isAudioSource(process.env.EXPO_PUBLIC_AUDIO_SOURCE)
     ? process.env.EXPO_PUBLIC_AUDIO_SOURCE

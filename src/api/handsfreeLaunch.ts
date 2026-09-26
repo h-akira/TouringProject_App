@@ -5,7 +5,7 @@
  * **`getInitialURL()` の結果＝アプリを最初に起動したときの古いURLを遅れて返す**ことがある。
  * ⚠️ **URL文字列の比較だけだと、それを「新しい押下」と取り違えて二重に処理する**
  * （実機で発生: 1回の押下で `startRecording` が並走し、互いのSCOを潰し合った。
- * [pre-research/mic-routing/](../../../pre-research/mic-routing/)）。
+ * docs/01_architecture.md §2）。
  *
  * 📌 **判定は押した時刻で行う**（ネイティブ側が押すたびに `System.currentTimeMillis()` を入れる。
  * `App/plugins/withVoiceInteraction.js`）。

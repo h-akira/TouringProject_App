@@ -1,5 +1,5 @@
 /**
- * 設定画面（docs/01_architecture.md §8）。
+ * 設定画面（docs/01_architecture.md §11）。
  *
  * 走行中には使わない画面なので、作り込みは最小限にとどめる
  * （CLAUDE.md「モバイルは必要最低限」）。停車中に触る想定。
@@ -11,7 +11,7 @@
  *     一時的に切っただけで選択が消えると、戻すときに選び直しになる）
  *
  * 📌 **無音検知（VAD）の調整は廃止した。** 走行中はエンジン音で音量が飽和して
- * 成立しないため（[adr/008](../../../adr/008_end_of_speech_detection.md)）。
+ * 成立しないため（adr/003_end_of_speech_detection.md）。
  * 音量計・dB表示・閾値の入力欄も一緒に消している。
  */
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -347,7 +347,7 @@ export default function Settings() {
       </Pressable>
 
       {/* ⚠️ **録音の用途（audioSource）。** 端末側のノイズ除去が変わる。
-          📌 実測は pre-research/handsfree/FINDINGS.md §15。 */}
+          📌 実測は https://github.com/h-akira/TouringProject_Research/blob/main/handsfree/FINDINGS.md §15。 */}
       <Text style={styles.fieldLabel}>録音の用途</Text>
       <Text style={styles.hint}>
         端末側の音の加工（ノイズ除去）が変わります。

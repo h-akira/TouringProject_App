@@ -4,14 +4,14 @@
  * **なぜ自前か**: `expo-audio` 1.1.1 の `setInput()` は
  * `setCommunicationDevice()` に**入力デバイス**を渡しているが、
  * 公式仕様は**出力(sink)しか受け付けない**ので黙って失敗する
- * （`pre-research/mic-routing/`）。
+ * （adr/005）。
  *
  * 📌 **録音そのものは `expo-audio` のまま。** ここは経路だけを担当する。
  *
  * ⚠️ **経路は2通りある**:
  * - `startVoiceRecognition()` — **インカムの「音声認識を始めて」に正式に返事をして張る**（いま使う方）
  * - `acquireSco()` — 仮想通話として張る。⚠️ **録音中にインカムのボタンが「電話を切る」になる**
- *   （`pre-research/mic-routing/FINDINGS.md` §10）
+ *   （adr/005。実測は https://github.com/h-akira/TouringProject_Research/blob/main/mic-routing/FINDINGS.md §10）
  */
 import { NativeModule, requireNativeModule } from "expo-modules-core";
 

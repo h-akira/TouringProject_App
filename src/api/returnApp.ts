@@ -1,10 +1,10 @@
 /**
- * 応答後に戻る先のアプリ（US-2.04・[adr/007](../../../adr/007_return_to_map_after_answer.md)）。
+ * 応答後に戻る先のアプリ（US-2.04・adr/002_return_to_map_after_answer.md）。
  *
  * ⚠️ **なぜ設定が要るか。** 「直前に見ていたアプリ」をアプリ側から知る手段が無い
  * （他アプリの前面判定は Android 5 以降塞がれている）。
  * また `moveTaskToBack` では**ホーム画面に落ちるだけ**で戻らないことが
- * 実機で確定した（`pre-research/handsfree/FINDINGS.md` §13.4）。
+ * 実機で確定した（adr/002）。
  * そのため**戻り先は利用者に選んでもらう。**
  *
  * ⚠️ **秘密ではないので AsyncStorage に置く**（`expo-secure-store` はAPIキー用）。

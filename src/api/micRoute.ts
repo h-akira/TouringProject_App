@@ -4,14 +4,14 @@
  * **なぜ要るか**: ⚠️ **これが無いと Pixel 本体マイクで録ってしまう。**
  * **ヘルメットの外にあるスマホが風とエンジン音を正面から拾う**ことになり、
  * ⚠️ **インカムのノイズ除去（CVC）が一度も経路に入らない**
- * （[adr/010](../../../adr/010_intercom_mic_routing.md)）。
+ * （adr/005_intercom_mic_routing.md）。
  *
  * ⚠️ **`expo-audio` の `setInput()` は使えない**（仕様違反で黙って失敗する）ので、
  * 📌 **経路だけを自前モジュール `bt-audio-route` で張る。**
  *
  * ⚠️ **張り方は「音声認識」**（`startVoiceRecognition`）。仮想通話（`acquireSco`）で張ると、
  * ①インカムのボタンで起動した直後は張れず ②録音中のボタンが「電話を切る」になって
- * 2回目の押下がアプリに届かない（`pre-research/mic-routing/FINDINGS.md` §9・§10）。
+ * 2回目の押下がアプリに届かない（adr/005。実測は https://github.com/h-akira/TouringProject_Research/blob/main/mic-routing/FINDINGS.md §9・§10）。
  * 📌 **その代わり、2回目の押下は `watchIntercomEnded()` の通知として届く。**
  *
  * ## ⚠️ 「張れない」には2種類ある（混ぜない）

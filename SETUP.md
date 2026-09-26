@@ -1,10 +1,6 @@
 # App/ セットアップと困ったとき
 
-> 📌 **このリポジトリは [TouringProject](https://github.com/h-akira/TouringProject) の submodule。**
-> 設計・経緯（`docs/` `adr/` `pre-research/`）と、**分離（2026-09-25）より前の git 履歴**は親リポジトリにある。
-
-**初回の環境構築・中断/再開の手順・つまずいたときの対処**を置く。
-**普段の使い方は [README.md](README.md)。**
+初回の環境構築・中断/再開の手順・つまずいたときの対処。普段の使い方は [README.md](README.md)、設計は [docs/](docs/README.md)。
 
 ## 動かす（実機Android + Development Build）
 
@@ -152,10 +148,7 @@ ANDROID_HOME="$HOME/Library/Android/sdk" ./android/gradlew -p android assembleRe
 できるもの: `android/app/build/outputs/apk/release/app-release.apk`
 **約45MB**（フルビルド **5分22秒** / 差分ビルドは30秒前後）。
 
-📌 **`arm64-v8a` だけをビルドしている**（`plugins/withSingleAbi.js`）。
-⚠️ **既定の4アーキテクチャだと `App/` が 18.9GB まで膨らむ**
-（`.so` が `node_modules` 配下に積み上がる）。詳細は
-[docs/01c](https://github.com/h-akira/TouringProject/blob/main/docs/01c_app_client.md) §8a。
+`arm64-v8a` だけをビルドしている（理由は [docs/02_build_and_release.md](docs/02_build_and_release.md) §2）。
 
 ### 実機へ入れる
 
@@ -290,8 +283,8 @@ release APKには**含まれない**ことを確認済み（Metroでの開発に
 
 ## Playストアに出すビルド（内部テスト用）
 
-⚠️ **上の release APK とは別物。** **Playに出すのは AAB**（Android App Bundle）で、
-**専用の署名鍵**が要る。方針の経緯は [adr/009](https://github.com/h-akira/TouringProject/blob/main/adr/009_play_internal_testing_release.md)。
+⚠️ **上の release APK とは別物。** Play に出すのは AAB（Android App Bundle）で、専用の署名鍵が要る。
+設計は [docs/02_build_and_release.md](docs/02_build_and_release.md)、経緯は [adr/004](adr/004_play_internal_testing_release.md)。
 
 | | 走るためのAPK | Playに出すAAB |
 |---|---|---|
@@ -340,8 +333,6 @@ TRG_KEY_PASSWORD='<鍵のパスワード>'
 `#` 以降が捨てられ、空白でコマンドとして解釈される**（変数が空になり、
 **署名がエラーになる**）。📌 **囲めば記号も空白もそのまま通る。**
 
-📌 **`build.gradle` には書き込まれない。** Gradle が**ビルド時に環境変数として読む**ので、
-**生成物に平文で残らない**（`plugins/withReleaseSigning.js`）。
 
 ### 3. AABを作る
 
@@ -351,9 +342,7 @@ cd App
 ANDROID_HOME="$HOME/Library/Android/sdk" npm run bundle:play
 ```
 
-できるもの: `android/app/build/outputs/bundle/release/app-release.aab`（**約72MB**）。
-📌 **APKより大きいのは全ABIを含むから。** ⚠️ **利用者の端末に届くのは
-Playが分割したぶんだけ**なので、ダウンロードサイズは増えない。
+できるもの: `android/app/build/outputs/bundle/release/app-release.aab`（約72MB。全 ABI を含むため）。
 
 ⚠️ **`npm run bundle:play` が `TRG_ALL_ABI=1` と `--clean` を内包している**
 （全ABIへの切り替え忘れを防ぐため）。⚠️ **その分ビルドは長い**（4〜5分）。
@@ -371,9 +360,7 @@ unzip -p "$AAB" 'META-INF/*.RSA' | keytool -printcert | grep -E '所有者|Owner
 grep versionCode android/app/build.gradle
 ```
 
-⚠️ **`versionCode` は `app.json` の `version` から自動で決まる**
-（`1.34.0` → `13400`。`plugins/withVersionCode.js`）。
-⚠️ **Playは同じ番号を二度受け付けない**ので、**出すたびに `version` を上げる。**
+⚠️ Play は同じ `versionCode`（`version` から導出）を二度受け付けないので、出すたびに `version` を上げる。
 
 ### 5. アップロード
 
@@ -393,16 +380,13 @@ git push && git push origin v1.42.0
 - 📌 **CI は `npm run bundle:aab` を呼ぶ。** `bundle:play` は `.env` を読んでからこれを呼ぶだけ。
   ⚠️ **`bundle:aab` は鍵の環境変数が無いと止まる**（黙って debug 署名にしない）
 - 📌 **鍵と Play の鍵（サービスアカウント）は GitHub の Environment `play` にあり、`v*` タグからしか読めない。**
-  準備の手順は [pre-research/play-cicd/SETUP.md](https://github.com/h-akira/TouringProject/blob/main/pre-research/play-cicd/SETUP.md)
+  準備の手順は CICD リポジトリ（非公開）の [PLAY_RELEASE.md](https://github.com/h-akira/TouringProject_CICD/blob/main/PLAY_RELEASE.md)
 
 ⚠️ **初回だけは Play Console の画面から手で上げる必要があった**
 （Play Developer API は**既に存在するアプリしか更新できない**）。**2026-09-13 に済んでいる。**
 
 ⚠️ **AABは実機に直接インストールできない。** 手元で動作確認するなら
 **上の release APK を使う**か、内部テストに上げてPlay経由で入れる。
-
-📌 **署名・AAB・`versionCode` の一般知識は
-[learning/14](https://github.com/h-akira/TouringProject/blob/main/learning/14_android_app_signing_and_release.md)。**
 
 ### 6. ⚠️ Play Console で迷ったところ（実際に踏んだもの）
 

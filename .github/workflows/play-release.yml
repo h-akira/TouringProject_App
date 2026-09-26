@@ -2,7 +2,7 @@ name: play-release
 
 # Build, sign and upload the app to Play's internal testing track when a
 # version tag (v*) is pushed. The "play" environment only hands out its
-# secrets to v* tags. Background: adr/009 in the parent repository.
+# secrets to v* tags. Background: adr/004.
 
 on:
   push:
