@@ -26,7 +26,7 @@ US-2.04（スマホに触れずに起動する）を満たす起動の手段が�
 ## 決定
 
 `MainActivity` に次の intent-filter を足し（`plugins/withVoiceInteraction.js`）、
-受けた `VOICE_COMMAND` を `app:///?autoRecord=1` の deep link に読み替えて JS に渡す。
+受けた `VOICE_COMMAND` を `app:///?autoRecord=<押した時刻>` の deep link に読み替えて JS に渡す（値を毎回変えるのは、`useURL()` が同じ値では再発火せず、2回目以降の押下が無視されるため）。
 `launchMode="singleTask"` なので、`onCreate` と `onNewIntent` の両方で読み替える。
 
 ```xml

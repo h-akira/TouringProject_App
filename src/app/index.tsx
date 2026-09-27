@@ -53,8 +53,8 @@ import type {
 
 // 画面に出すバージョン（app.json の version）。
 // ⚠️ **実機で「更新が反映されたか」を確かめるためのもの。**
-// Expo Go はキャッシュが残ることがあり、見た目では判別できないため。
-// アプリの変更時は app.json の version を上げること（CLAUDE.md に明記）。
+// キャッシュが残ることがあり、見た目では判別できないため。
+// ビルドが変わる変更のときは app.json の version を上げること（AGENTS.md に明記）。
 const APP_VERSION = Constants.expoConfig?.version ?? "?";
 
 // Backend base URL from the environment (.env -> EXPO_PUBLIC_API_BASE_URL).
@@ -83,7 +83,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
  *
  * ⚠️ **403 と 429 はAPIキー導入で現実的になったもの**で、原因がURLからは
  * 判別できない。API Gateway は**キー違い・キー無し・未定義のパス**のいずれも
- * 403 で返すため、断定せず両方の可能性を示す（Backend/README.md）。
+ * 403 で返すため、断定せず両方の可能性を示す（docs-parent/03_units_contracts.md UC-4）。
  */
 function describeHttpError(status: number, serverError?: string): string {
   if (status === 403) {
