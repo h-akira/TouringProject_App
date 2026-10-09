@@ -34,7 +34,7 @@ flowchart TD
 インカムのボタンを押すと Android が `ACTION_VOICE_COMMAND` を発行し、`MainActivity` の intent-filter で受ける（[adr/001](../adr/001_handsfree_launch_mechanism.md)）。
 端末の既定のデジタルアシスタントは Google のままでよい。
 
-⚠️ Google App が `VOICE_COMMAND` の既定（preferred activity）に固定されていると、intent-filter があっても無視される（ボタンを押すと Google が開く）。初回だけ `設定 > アプリ > Google > デフォルトをクリア` で固定を外す。アシスタントのロールを明け渡すのとは別物。
+⚠️ Google App が `VOICE_COMMAND` の既定（preferred activity）に固定されていると、intent-filter があっても無視される（ボタンを押すと Google が開く）。初回だけ Google を一度無効にして有効に戻し、固定を外す（Google の設定にはクリアのボタンがない。手順は [USAGE.md](../USAGE.md)）。アシスタントのロールを明け渡すのとは別物。
 
 ### ネイティブから JS への受け渡し
 

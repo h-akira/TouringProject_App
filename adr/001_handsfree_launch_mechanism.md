@@ -1,6 +1,6 @@
 # 001. ハンズフリー起動は `VOICE_COMMAND` を `MainActivity` の intent-filter で受ける
 
-- **日付**: 2026-08-17（最終更新 2026-09-27）
+- **日付**: 2026-08-17（最終更新 2026-10-09）
 - **ステータス**: 採用
 
 ## 背景
@@ -41,7 +41,7 @@ US-2.04（スマホに触れずに起動する）を満たす起動の手段が�
 ## 影響
 
 - 既定のデジタルアシスタントは Google のままでよい。Google アシスタントもマップの音声入力も残る。
-- ⚠️ 端末で Google App が `VOICE_COMMAND` の既定（preferred activity）に固定されていると、intent-filter があっても無視される。初回だけ `設定 > アプリ > Google > デフォルトをクリア` が要る。
+- ⚠️ 端末で Google App が `VOICE_COMMAND` の既定（preferred activity）に固定されていると、intent-filter があっても無視される。初回だけ Google を一度無効にして有効に戻し、固定を外す必要がある（Google の設定にはクリアのボタンがない。手順は [USAGE.md](../USAGE.md)）。
 - `FLAG_ACTIVITY_NEW_TASK` で新しいタスクとして前面に出るので、ナビ中のマップが引っ込む。戻し方は [002](002_return_to_map_after_answer.md)。
 - ネイティブの変更なので Expo Go では動かない（Development Build が要る）。
 
