@@ -11,6 +11,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import android.media.ToneGenerator
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -161,6 +162,14 @@ class BtAudioRouteModule : Module() {
     // いま録音がどのマイクで行われているか（⚠️ 「インカムのつもりが本体マイク」を見抜くため）。
     AsyncFunction("describeRecording") {
       describeRecording()
+    }.runOnQueue(Queues.MAIN)
+
+    // 録音が始まったことをライダーに知らせる短いビープ音。
+    // ⚠️ 通話系のストリームで鳴らす。外部の SCO が張られていれば通話系は SCO に向くので、
+    // インカムで録っているときはインカムから聞こえる（メディアのストリームだと A2DP に
+    // 向かい、SCO の最中は鳴らないことがある）。録音にも入るが、短いので文字起こしは乱れない。
+    AsyncFunction("playStartCue") { durationMs: Int ->
+      playStartCue(durationMs)
     }.runOnQueue(Queues.MAIN)
 
     // 経路まわりの状態を1行で（診断用）。
@@ -605,6 +614,23 @@ class BtAudioRouteModule : Module() {
     return mapOf("recordings" to list, "snapshot" to snapshot())
   }
 
+  // ⚠️ 失敗しても投げない（合図が鳴らないより、録音が止まる方が困る）。鳴らせたかを返す。
+  private fun playStartCue(durationMs: Int): Boolean {
+    val tone = try {
+      ToneGenerator(AudioManager.STREAM_VOICE_CALL, START_CUE_VOLUME)
+    } catch (e: RuntimeException) {
+      trace("cue", "ToneGenerator failed: ${e.message} ${snapshot()}")
+      return false
+    }
+    // ⚠️ 連続音を使う。TONE_PROP_BEEP のような既定の長さを持つ音は durationMs が上限にしか
+    // ならず、1秒を指定しても約0.16秒で止まった（dumpsys media.audio_flinger で確認）。
+    val started = tone.startTone(ToneGenerator.TONE_SUP_DIAL, durationMs)
+    trace("cue", "start cue ${if (started) "played" else "not played"} ${snapshot()}")
+    // ⚠️ 鳴り終えてから解放する（すぐ release すると音が途切れる）。
+    main.postDelayed({ tone.release() }, durationMs + 200L)
+    return started
+  }
+
   // 経路まわりの状態を1行にまとめる。⚠️ 何かがおかしいときに「その瞬間の全体」を残すため。
   private fun snapshot(): String {
     val am = runCatching { audioManager }.getOrNull() ?: return "[no audio manager]"
@@ -716,5 +742,7 @@ class BtAudioRouteModule : Module() {
     const val AUDIO_OFF_WAIT_MS = 1_500L
     const val TRACE_FILE = "btroute-trace.log"
     const val TRACE_MAX_BYTES = 2L * 1024 * 1024
+    // ToneGenerator の音量（0〜100。ストリームの音量に対する割合）。走行中の風切り音に負けないよう大きめ。
+    const val START_CUE_VOLUME = 100
   }
 }

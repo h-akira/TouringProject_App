@@ -115,6 +115,12 @@ declare class BtAudioRouteModule extends NativeModule<BtAudioRouteEvents> {
   /** いま録音がどのマイクで行われているか。 */
   describeRecording(): Promise<RecordingInfo>;
 
+  /**
+   * 録音の開始を知らせる短いビープ音を、通話系のストリームで鳴らす
+   * （SCO を張っていればインカムから聞こえる）。鳴らせたかを返す。⚠️ **例外は投げない。**
+   */
+  playStartCue(durationMs: number): Promise<boolean>;
+
   /** 経路まわりの状態を1行で。 */
   snapshot(): Promise<string>;
 

@@ -16,6 +16,7 @@
  */
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { RecordingSource } from "expo-audio";
+import { DEFAULT_START_CUE_MS, normalizeStartCueMs } from "./startCue";
 
 /**
  * 保存先のキー名。
@@ -44,6 +45,12 @@ export type RecordingSettings = {
    * （https://github.com/h-akira/TouringProject_Research/blob/main/handsfree/FINDINGS.md §15）。
    */
   audioSource: RecordingSource;
+
+  /**
+   * 録音の開始の合図の長さ（ミリ秒）。0 なら鳴らさない。
+   * 選べる値は src/api/startCue.ts の `START_CUE_CHOICES`。
+   */
+  startCueMs: number;
 };
 
 /**
@@ -106,6 +113,7 @@ export const DEFAULT_RECORDING_SETTINGS: RecordingSettings = {
   audioSource: isAudioSource(process.env.EXPO_PUBLIC_AUDIO_SOURCE)
     ? process.env.EXPO_PUBLIC_AUDIO_SOURCE
     : "voice_communication",
+  startCueMs: DEFAULT_START_CUE_MS,
 };
 
 /**
@@ -154,6 +162,8 @@ export function normalizeRecordingSettings(raw: unknown): RecordingSettings {
     audioSource: isAudioSource(source.audioSource)
       ? source.audioSource
       : DEFAULT_RECORDING_SETTINGS.audioSource,
+    // ⚠️ この項目が無い古い保存値は既定（1.5秒）になる。
+    startCueMs: normalizeStartCueMs(source.startCueMs),
   };
 }
 

@@ -44,6 +44,7 @@ import AppForeground from "@/native/app-foreground";
 import {
   acquireMicRoute,
   describeMicRoute,
+  playStartCue,
   releaseMicRoute,
   traceActiveRecording,
   watchIntercomEnded,
@@ -674,6 +675,9 @@ export default function Index() {
       await recorder.prepareToRecordAsync();
       if (startAbortRef.current) return await abortStart();
       recorder.record();
+      // ⚠️ **録音を始めてから鳴らす。** ライダーはこれを聞いてから話す
+      // （合図が無いと押してすぐ話し、経路を張る間に質問の頭が落ちる）。
+      void playStartCue(settingsRef.current.startCueMs);
       recordingRef.current = true;
       recordingStartedAt.current = Date.now();
       setRecording(true);

@@ -41,6 +41,7 @@ import {
   normalizeRecordingSettings,
   type RecordingSettings,
 } from "@/api/recordingSettings";
+import { START_CUE_CHOICES } from "@/api/startCue";
 
 /** 数秒後に自動で消える通知を扱う。 */
 const MESSAGE_TIMEOUT_MS = 3_000;
@@ -228,6 +229,19 @@ export default function Settings() {
    * いま選んでいるアプリを消しても設定は変わらない
    * （消した直後も「いま選択中」の表示は残る）。
    */
+  /** 開始の合図の長さ。⚠️ 録音の用途と同じく、選んだ時点で保存する。 */
+  async function onSelectStartCue(value: number) {
+    try {
+      const saved = await saveRecordingSettings({ ...rec, startCueMs: value });
+      setRec(saved);
+      setRecMessage(
+        value === 0 ? "開始の合図を鳴らさないようにしました" : `開始の合図を${value / 1000}秒にしました`,
+      );
+    } catch (e) {
+      setRecMessage("保存に失敗しました: " + String(e));
+    }
+  }
+
   async function onRemoveRecent(packageName: string) {
     try {
       setRecentApps(await removeRecentApp(packageName));
@@ -243,6 +257,7 @@ export default function Settings() {
       maxRecordingMs: Number(maxRecordingSec) * 1000,
       // ⚠️ **入力欄には無いので、いまの値を持ち回る**（落とすと既定に戻る）。
       audioSource: rec.audioSource,
+      startCueMs: rec.startCueMs,
     });
     try {
       const saved = await saveRecordingSettings(parsed);
@@ -368,6 +383,26 @@ export default function Settings() {
             {rec.audioSource === choice.value ? "◉" : "○"}　{choice.label}
           </Text>
           <Text style={styles.hint}>{choice.hint}</Text>
+        </Pressable>
+      ))}
+
+      <Text style={styles.fieldLabel}>開始の合図</Text>
+      <Text style={styles.hint}>
+        録音が始まるとインカムから鳴る音の長さです。鳴ってから話してください。
+        インカムは音の出だしを落とすので、短すぎると聞こえません。
+      </Text>
+      {START_CUE_CHOICES.map((choice) => (
+        <Pressable
+          key={choice.value}
+          style={[
+            styles.appRow,
+            rec.startCueMs === choice.value && styles.appRowSelected,
+          ]}
+          onPress={() => void onSelectStartCue(choice.value)}
+        >
+          <Text style={styles.appRowText}>
+            {rec.startCueMs === choice.value ? "◉" : "○"}　{choice.label}
+          </Text>
         </Pressable>
       ))}
 

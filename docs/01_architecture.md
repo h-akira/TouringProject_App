@@ -22,7 +22,7 @@ flowchart TD
     B["インカムのボタン"] -->|"ACTION_VOICE_COMMAND"| MA["MainActivity<br/>intent-filter で受ける"]
     MA -->|"deep link に読み替え<br/>app:///?autoRecord=&lt;時刻&gt;"| JS["JS（expo-linking）"]
     JS --> VR["インカムの経路を張る<br/>（音声認識として。§4）"]
-    VR --> REC["録音開始"]
+    VR --> REC["録音開始<br/>開始の合図を鳴らす（§4）"]
     REC -->|"ボタン再押し／上限（§3）"| SEND["POST /ask-audio"]
     SEND --> POLL["ポーリング<br/>GET /ask/{requestId}"]
     POLL --> PLAY["読み上げ"]
@@ -86,7 +86,7 @@ flowchart TD
 BluetoothHeadset.startVoiceRecognition(device)   ← インカムの「音声認識を始めて」に返事をする
   → Bluetooth スタックが SCO を張る（実測 約220ms）
   → setMode(MODE_IN_COMMUNICATION)                ← 通話系の経路は自動で SCO に向く
-録音
+録音 → 開始の合図（ビープ音。通話系のストリームなのでインカムから聞こえる）
   → stopVoiceRecognition(device) + MODE_NORMAL
 ```
 
@@ -100,6 +100,7 @@ BluetoothHeadset.startVoiceRecognition(device)   ← インカムの「音声認
 | セッションに番号を振り、通知は機器も照合する | 自分で止めたときの切断や、別の HFP 機器（車載器など）の切断を2回目の押下と取り違えない |
 | 録音開始から1秒未満で切れたら、送らずに本体マイクへの切り替えとして扱う | 経路はもう無いので、無視すると警告なしに本体マイクで録り続ける。画面に警告を出し、次の押下（`VOICE_COMMAND`）で送る |
 | 張れなければ本体マイクで録って続行する | 走行中に黙るのが最も困る。インカムがあるのに張れなかったときだけ画面に警告を出す |
+| 録音を始めた直後に開始の合図を鳴らす | 押してから録音が始まるまで経路を張る時間がかかる。合図が無いと押してすぐ話し始め、質問の頭が録音に入らない。合図より前に鳴らすと、鳴ってから録音が始まるまでの声が落ちる。インカムは出だしを落とすので、約0.16秒では聞こえず、1秒でも短く聞こえた。聞こえ方はインカムで変わるので、長さは設定で選ぶ（なし・0.5〜3秒。既定1.5秒） |
 | 経路と録音の記録を端末内のファイルにも残す | logcat は数分で流れる。実際に録っているマイクも録音の開始直後と終了直前に残す（取り出し方は [SETUP.md](../SETUP.md)） |
 
 ## 5. 応答後にナビのアプリへ戻る

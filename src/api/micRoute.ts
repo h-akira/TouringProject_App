@@ -132,6 +132,27 @@ export function watchIntercomEnded(
   return () => sub.remove();
 }
 
+/**
+ * ⚠️ **録音が始まった直後に呼ぶ。** ライダーはこの音を聞いてから話し始める。
+ *
+ * **なぜ要るか**: ボタンを押してから録音が始まるまで、経路を張る時間がかかる。
+ * 合図が無いと押してすぐ話し始めてしまい、**質問の頭が録音に入らない**。
+ *
+ * ⚠️ **録音より前に鳴らさない。** 鳴ってから録音が始まるまでの声が落ちる。
+ * ⚠️ **例外を投げない**（合図の失敗で録音を止めない）。
+ *
+ * 長さは設定で選ぶ（src/api/startCue.ts）。0 なら鳴らさない。
+ */
+export async function playStartCue(durationMs: number): Promise<void> {
+  if (durationMs <= 0) return;
+  try {
+    const played = await BtAudioRoute.playStartCue(durationMs);
+    if (!played) trace("[mic] ⚠️ 開始の合図を鳴らせなかった");
+  } catch (e) {
+    trace("[mic] ⚠️ 開始の合図で例外:", e);
+  }
+}
+
 /** いま録音がどのマイクで行われているかを記録に残す（⚠️ **経路の成否の最終確認**）。 */
 export async function traceActiveRecording(label: string): Promise<void> {
   try {
