@@ -77,13 +77,14 @@ const POLL_STEPS = [
   { untilMs: 60_000, intervalMs: 2_000 },
   { untilMs: 120_000, intervalMs: 4_000 },
 ] as const;
+/** 失敗の帯（黄色）を出しておく時間。 */
+const FAILURE_BANNER_MS = 15_000;
+
 /** 経過時間に応じた次のポーリング間隔。打ち切り後は null。 */
 function nextPollInterval(elapsedMs: number): number | null {
   const step = POLL_STEPS.find((s) => elapsedMs < s.untilMs);
   return step ? step.intervalMs : null;
 }
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * HTTPエラーを、走行中でも意味の取れる文にする。
@@ -230,6 +231,8 @@ export default function Index() {
   const [sending, setSending] = useState(false);
   // 回答待ちの経過秒数（全面の青い画面に出す）。null なら待っていない。
   const [waitingSec, setWaitingSec] = useState<number | null>(null);
+  // ポーリングの待ち（最大4秒）を途中で起こす。取り消したら即座に待機の画面へ戻すため。
+  const wakePoll = useRef<(() => void) | null>(null);
 
   // 会話を続けるためのセッションID。サーバーが発行した値を保持して次回送る。
   // 要件は「一問一答＋α」で、アプリを再起動してまで続ける想定はないため
@@ -1026,7 +1029,8 @@ export default function Index() {
         // 黙ると「何も起きなかった」と区別がつかないので、本文を読み上げる。
         if (!result.audioUrl) announceIfHandsFree(result.text);
       } else {
-        noteOutcome({ outcome: "回答を取得できませんでした" });
+        // 取り消し・リセット・画面離脱のどれか（どれも回答を受け取らないと決めたもの）。
+        noteOutcome({ outcome: "回答を受け取らずにやめました" });
         announceIfHandsFree("回答を取得できませんでした。もう一度お話しください。");
       }
     } catch (e) {
@@ -1176,8 +1180,17 @@ export default function Index() {
           ok: false,
         };
       }
-      await sleep(interval);
-      // 待っている間に画面を離れた／リセットされたら、そこで諦める。
+      // ⚠️ **取り消されたらすぐ起きる**（`cancelCurrent`）。ただ眠ると最大4秒、
+      // 取り消したのに青い画面が残る。
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, interval);
+        wakePoll.current = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+      });
+      wakePoll.current = null;
+      // 待っている間に画面を離れた／リセットされた／取り消されたら、そこで諦める。
       if (pollAbort.current) return null;
 
       let result: AskResultResponse & { error?: string };
@@ -1241,6 +1254,34 @@ export default function Index() {
     }
   }
 
+  /**
+   * いまの録音・回答待ち・読み上げをやめて待機に戻る（全面表示の「やめる」）。
+   *
+   * ⚠️ **録音は送らずに捨てる。回答待ちは、サーバー側の処理は止まらないが
+   * 回答を受け取らない**（次の質問に前の回答が混ざらないよう `pollAbort` で切る）。
+   * ⚠️ **ハンズフリーの一往復もここで終わり。** 画面を触っている＝見ているので、
+   * 読み上げで知らせない・マップへ戻らない。
+   */
+  function cancelCurrent() {
+    trace("[ui] cancel", { recording: recordingRef.current, sending });
+    launchedHandsFree.current = false;
+    wasHandsFree.current = false;
+    if (recordingRef.current || startingRef.current) {
+      discardRecording();
+      return;
+    }
+    if (sending) {
+      pollAbort.current = true;
+      wakePoll.current?.();
+      return;
+    }
+    try {
+      player.pause();
+    } catch {
+      // 何も鳴っていなければ失敗しうる。捨ててよい。
+    }
+  }
+
   // 画面を離れるときにポーリングを止める（放置すると裏で叩き続ける）。
   // ⚠️ **録音も一緒に捨てる。** タイマーを止めるだけでは足りず、
   // マイクを掴んだまま・音声モードが録音向きのまま残る。
@@ -1255,6 +1296,15 @@ export default function Index() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 失敗の帯は一定時間で消す。⚠️ 出しっぱなしだと、次にチラ見したときに
+  // いまの失敗か前の失敗か区別がつかない。
+  useEffect(() => {
+    if (!answerFailed) return;
+    const timer = setTimeout(clearAnswer, FAILURE_BANNER_MS);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [answer, answerFailed]);
 
   // 回答待ちの経過秒数を数える（全面の青い画面に出す）。
   // ⚠️ **待っていることが分からないと「落ちた」と区別がつかない**ので、数字を動かし続ける。
@@ -1284,30 +1334,35 @@ export default function Index() {
 
   if (phase !== null) {
     return (
-      <Pressable
+      <View
         style={[
           styles.phaseScreen,
           styles[`phase_${phase}`],
           { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 24 },
         ]}
-        // ⚠️ **録音中は画面のどこを押しても送信。** 手袋でも狙わずに押せるように。
-        // 読み上げ中は押すと止める。回答待ちは押しても何もしない。
-        onPress={
-          phase === "recording"
-            ? () => void stopRecordingAndSend()
-            : phase === "speaking"
-              ? () => player.pause()
-              : undefined
-        }
       >
+        {/* ⚠️ **押せる場所は「上の大きな領域」と「下のやめるボタン」の2つに分け、入れ子にしない。**
+            入れ子にすると外側が押下を取り、「やめる」を押しても送信された（実機で確認）。 */}
+        <Pressable
+          style={styles.phaseMain}
+          // ⚠️ **録音中は上の領域のどこを押しても送信。** 手袋でも狙わずに押せるように。
+          // 読み上げ中は押すと止める。回答待ちは押しても何もしない。
+          onPress={
+            phase === "recording"
+              ? () => void stopRecordingAndSend()
+              : phase === "speaking"
+                ? () => player.pause()
+                : undefined
+          }
+        >
         {phase === "recording" && (
           <>
             <Text style={styles.phaseTitle}>● 話してください</Text>
-            <Text style={styles.phaseBig}>
+            <Text style={styles.phaseBig} numberOfLines={1} adjustsFontSizeToFit>
               {remainingSec === null ? "—" : `あと ${remainingSec} 秒`}
             </Text>
             <Text style={styles.phaseNote}>
-              インカムのボタンか、画面のどこかを押すとすぐ送信します
+              インカムのボタンか、この赤い部分を押すとすぐ送信します
             </Text>
             {micWarning && <Text style={styles.phaseWarning}>{micWarning}</Text>}
           </>
@@ -1315,7 +1370,9 @@ export default function Index() {
         {phase === "waiting" && (
           <>
             <Text style={styles.phaseTitle}>考えています…</Text>
-            <Text style={styles.phaseBig}>{waitingSec ?? 0} 秒</Text>
+            <Text style={styles.phaseBig} numberOfLines={1} adjustsFontSizeToFit>
+              {waitingSec ?? 0} 秒
+            </Text>
             <Text style={styles.phaseNote}>回答を待っています（最初の質問は10秒ほど）</Text>
           </>
         )}
@@ -1327,11 +1384,23 @@ export default function Index() {
                 {answer}
               </Text>
             )}
-            <Text style={styles.phaseNote}>画面を押すと読み上げを止めます</Text>
           </>
         )}
+        </Pressable>
+        {/* ⚠️ **どの状態からもやめられること。** 送る・待つ・聞くのどれも、
+            途中でやめられないと走行中に困る。画面の下に大きく置き、
+            上の「押すと送信」と取り違えないよう見た目を分ける。 */}
+        <Pressable style={styles.cancelButton} onPress={cancelCurrent}>
+          <Text style={styles.cancelButtonText}>
+            {phase === "recording"
+              ? "✕ 送らずにやめる"
+              : phase === "waiting"
+                ? "✕ 待つのをやめる"
+                : "■ 読み上げを止める"}
+          </Text>
+        </Pressable>
         <Text style={styles.phaseVersion}>v{APP_VERSION}</Text>
-      </Pressable>
+      </View>
     );
   }
 
@@ -1527,6 +1596,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     gap: 28,
   },
+  // 押すと送信（録音中）・止める（読み上げ中）の領域。やめるボタン以外の全部。
+  phaseMain: {
+    flex: 1,
+    alignSelf: "stretch",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 28,
+  },
   phase_recording: { backgroundColor: "#C62828" },
   phase_waiting: { backgroundColor: "#1565C0" },
   phase_speaking: { backgroundColor: "#2E7D32" },
@@ -1552,6 +1629,17 @@ const styles = StyleSheet.create({
   },
   phaseAnswer: { fontSize: 24, color: "#FFFFFF", lineHeight: 34 },
   phaseVersion: { fontSize: 11, color: "#FFFFFF66" },
+  // 全面表示の「やめる」。⚠️ 背景と同じ色の上に白い太枠で、押せる場所だと分かるようにする。
+  cancelButton: {
+    alignSelf: "stretch",
+    paddingVertical: 28,
+    borderRadius: 16,
+    borderWidth: 4,
+    borderColor: "#FFFFFF",
+    backgroundColor: "#00000040",
+    alignItems: "center",
+  },
+  cancelButtonText: { fontSize: 30, fontWeight: "bold", color: "#FFFFFF" },
   // 失敗の帯。⚠️ 黄色は待機の画面のどの色とも被らない（チラ見で「失敗」と分かる）。
   failureBanner: {
     alignSelf: "stretch",
