@@ -14,7 +14,13 @@ export default function RootLayout() {
   // values; without it the bottom button sits under Android's navigation bar.
   return (
     <SafeAreaProvider>
-      <Stack />
+      {/* ⚠️ メイン画面は見出しを出さない（"index" と出て縦を取り、下の
+          「新しい会話を始める」がスクロールしないと見えなくなっていた）。
+          設定画面は戻る矢印のために見出しを残す。 */}
+      <Stack>
+        <Stack.Screen name="index" options={{ headerShown: false }} />
+        <Stack.Screen name="settings" options={{ title: "設定" }} />
+      </Stack>
     </SafeAreaProvider>
   );
 }

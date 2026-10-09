@@ -1409,12 +1409,14 @@ export default function Index() {
       contentContainerStyle={[
         styles.container,
         // 端末のナビゲーションバーの高さぶん余白を足す（最低24）。
-        { paddingBottom: Math.max(insets.bottom, 24) + 24 },
+        // ⚠️ 見出しを出さないので、上はステータスバーの高さぶん空ける。
+        {
+          paddingTop: insets.top + 12,
+          paddingBottom: Math.max(insets.bottom, 24) + 24,
+        },
       ]}
       keyboardShouldPersistTaps="handled"
     >
-      {/* 実機で更新が反映されたかを確かめるための表示（走行中には使わない） */}
-      <Text style={styles.version}>v{APP_VERSION}</Text>
 
       {/* ⚠️ **失敗は一番上に大きく出す。** 下の回答欄だけだとチラ見では気づけない。 */}
       {answer && answerFailed && (
@@ -1424,8 +1426,13 @@ export default function Index() {
         </View>
       )}
 
-      <Text style={styles.status}>{status}</Text>
-
+      {/* ⚠️ **スクロールせずに全体が見えるよう、上部は1行にまとめる。**
+          版は実機で更新が反映されたかを確かめるための表示（走行中には使わない）。 */}
+      <View style={styles.topRow}>
+        <View style={styles.topRowInfo}>
+          <Text style={styles.version}>v{APP_VERSION}</Text>
+          <Text style={styles.status}>{status}</Text>
+        </View>
       {/* キーが無いと質問できないので、その場合だけ目立たせて設定へ促す。
           ⚠️ **設定済みでもボタンのまま置く。** ツーリング中に停車して開く
           ことがあり、⚠️ **小さなリンクだと手袋のまま押せない。** */}
@@ -1447,13 +1454,15 @@ export default function Index() {
           </Text>
         </Pressable>
       )}
+      </View>
 
       {coords && (
         <View style={styles.card}>
-          <Text style={styles.label}>緯度</Text>
-          <Text style={styles.value}>{coords.latitude}</Text>
-          <Text style={styles.label}>経度</Text>
-          <Text style={styles.value}>{coords.longitude}</Text>
+          {/* 開発用の確認表示なので小さく横に並べる（縦を取らない）。 */}
+          <View>
+            <Text style={styles.label}>緯度 {coords.latitude.toFixed(5)}</Text>
+            <Text style={styles.label}>経度 {coords.longitude.toFixed(5)}</Text>
+          </View>
           {/* 進行方位の確認用（US-2.03）。矢印が進行方向を指す。
               停車中・転回直後は出ない（それが正しい挙動）。 */}
           {heading !== null ? (
@@ -1476,7 +1485,7 @@ export default function Index() {
               </Text>
             </View>
           ) : (
-            <Text style={styles.note}>進行方向: まだ出せません（停車中など）</Text>
+            <Text style={styles.note}>進行方向: まだ出せません</Text>
           )}
         </View>
       )}
@@ -1683,19 +1692,30 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   settingsButtonText: { color: "#CCCCDD", fontSize: 18, fontWeight: "bold" },
-  compass: { alignItems: "center", marginTop: 12, gap: 2 },
+  topRow: {
+    alignSelf: "stretch",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  topRowInfo: { flexShrink: 1, gap: 2 },
+  compass: { alignItems: "center", gap: 2 },
   // 矢印そのものを回して進行方向を指す。
   compassNeedle: { fontSize: 34, color: "#FF6B35", lineHeight: 38 },
   compassLabel: { fontSize: 18, fontWeight: "bold", color: "#FFFFFF" },
   card: {
+    alignSelf: "stretch",
     backgroundColor: "#2A2A3E",
-    padding: 20,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
     borderRadius: 8,
+    flexDirection: "row",
     alignItems: "center",
-    gap: 4,
+    justifyContent: "space-between",
+    gap: 12,
   },
-  label: { fontSize: 13, color: "#AAAAAA", marginTop: 8 },
-  value: { fontSize: 20, fontWeight: "bold", color: "#FF6B35" },
+  label: { fontSize: 13, color: "#AAAAAA" },
   voiceArea: { alignSelf: "stretch", alignItems: "center", gap: 8 },
   // ⚠️ 走行中はこれを見ずに押す。指の当たる面積を大きく取る。
   // ⚠️ **待機中の本命の入口。** 停車中に手袋で押せて、チラ見で見つかる大きさにする。
