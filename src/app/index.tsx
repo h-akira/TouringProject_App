@@ -15,6 +15,7 @@ import { useURL, parse as parseUrl } from "expo-linking";
 import {
   useAudioRecorder,
   useAudioPlayer,
+  useAudioPlayerStatus,
   requestRecordingPermissionsAsync,
   setAudioModeAsync,
 } from "expo-audio";
@@ -223,7 +224,12 @@ export default function Index() {
   );
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState<string | null>(null);
+  // ⚠️ **`answer` が回答か失敗の文言か。** 失敗のときは画面の一番上に黄色の帯で出す
+  // （走行中にチラ見して「失敗した」と分かるように）。
+  const [answerFailed, setAnswerFailed] = useState(false);
   const [sending, setSending] = useState(false);
+  // 回答待ちの経過秒数（全面の青い画面に出す）。null なら待っていない。
+  const [waitingSec, setWaitingSec] = useState<number | null>(null);
 
   // 会話を続けるためのセッションID。サーバーが発行した値を保持して次回送る。
   // 要件は「一問一答＋α」で、アプリを再起動してまで続ける想定はないため
@@ -277,6 +283,8 @@ export default function Index() {
   // プレイヤーは1つを使い回す。
   // ⚠️ 音声は署名付きURLで来る（数分で失効）。届いたらすぐ鳴らす。
   const player = useAudioPlayer(null);
+  // 読み上げ中かどうか（全面の緑の画面を出す）。
+  const playerStatus = useAudioPlayerStatus(player);
 
   // 録音の押し忘れを止めるためのタイマー。走行中は画面を見ないので、
   // 上限に達したら自動で送信に回す。
@@ -484,16 +492,16 @@ export default function Index() {
   async function askBackend() {
     if (!coords || !question.trim() || sending) return;
     if (!API_BASE_URL) {
-      setAnswer("エラー: API URL が未設定です（.env を確認）");
+      showFailure("エラー: API URL が未設定です（.env を確認）");
       return;
     }
     // キーが無ければAPIは403を返すだけなので、手前で気づける形にする。
     if (!apiKey) {
-      setAnswer("エラー: APIキーが未設定です（設定画面で入力してください）");
+      showFailure("エラー: APIキーが未設定です（設定画面で入力してください）");
       return;
     }
     setSending(true);
-    setAnswer(null);
+    clearAnswer();
     // 新しい質問を始めるので、前回の中断指示は解除する。
     pollAbort.current = false;
     try {
@@ -531,7 +539,7 @@ export default function Index() {
       });
       const data = (await res.json()) as AskAcceptedResponse & { error?: string };
       if (!res.ok) {
-        setAnswer(describeHttpError(res.status, data.error));
+        showFailure(describeHttpError(res.status, data.error));
         return;
       }
       // 次回のために発行されたIDを覚えておく（これが会話継続の要）
@@ -546,13 +554,13 @@ export default function Index() {
       // null は「中断された」= 画面を離れた/リセットされた。表示は変えない。
       const result = await pollForAnswer(data.requestId, apiKey);
       if (result !== null) {
-        setAnswer(result.text);
+        showResult(result.text, result.ok);
         // 文字で聞いても音声は返る。走行中は画面を見ないので鳴らす。
         if (result.audioUrl) playAnswer(result.audioUrl);
         void returnToMapIfHandsFree();
       }
     } catch (e) {
-      setAnswer("送信に失敗しました: " + String(e));
+      showFailure("送信に失敗しました: " + String(e));
     } finally {
       setSending(false);
       // ⚠️ **この経路でも必ず倒す。** 残すと、あとで画面から質問して成功した
@@ -626,7 +634,7 @@ export default function Index() {
     // ⚠️ **開始処理中も弾く**（`startingRef` 参照）。最初の await より前に立てる。
     if (recordingRef.current || startingRef.current || sending) return false;
     if (!apiKey) {
-      setAnswer("エラー: APIキーが未設定です（設定画面で入力してください）");
+      showFailure("エラー: APIキーが未設定です（設定画面で入力してください）");
       return false;
     }
     startingRef.current = true;
@@ -643,7 +651,7 @@ export default function Index() {
     try {
       const { granted } = await requestRecordingPermissionsAsync();
       if (!granted) {
-        setAnswer("エラー: マイクの許可が得られませんでした");
+        showFailure("エラー: マイクの許可が得られませんでした");
         return false;
       }
       if (startAbortRef.current) return await abortStart();
@@ -681,7 +689,7 @@ export default function Index() {
       recordingRef.current = true;
       recordingStartedAt.current = Date.now();
       setRecording(true);
-      setAnswer(null);
+      clearAnswer();
       // 開始処理の途中で経路が切れていたら、ここで扱う（本体マイクに落ちている）。
       if (lostDuringStartRef.current) fallBackToBuiltinMic("経路が開始処理中に切れた");
       // 📌 **実際にどのマイクで録っているか**を残す（録音が始まるまで少し待つ）。
@@ -713,7 +721,7 @@ export default function Index() {
       stopWatchingIntercom();
       trace("[recording] start failed:", e);
       void releaseMicRoute("start failed");
-      setAnswer("録音を開始できませんでした: " + String(e));
+      showFailure("録音を開始できませんでした: " + String(e));
       return false;
     } finally {
       startingRef.current = false;
@@ -943,7 +951,7 @@ export default function Index() {
       } catch {
         // ここまで失敗したら打つ手が無い。
       }
-      setAnswer("録音を停止できませんでした: " + String(e));
+      showFailure("録音を停止できませんでした: " + String(e));
       // ⚠️ この2つの return は下の finally を通らないので、ここで倒す
       // （残すと、次に画面から操作したときに勝手に引っ込む）。
       launchedHandsFree.current = false;
@@ -970,7 +978,7 @@ export default function Index() {
     const coords = coordsRef.current;
     const apiKey = apiKeyRef.current;
     if (!uri || !coords || !apiKey || !API_BASE_URL) {
-      setAnswer("エラー: 録音を送信できませんでした");
+      showFailure("エラー: 録音を送信できませんでした");
       noteOutcome({ outcome: "エラー: 録音を送信できませんでした" });
       launchedHandsFree.current = false;
       return;
@@ -992,7 +1000,7 @@ export default function Index() {
           accepted.httpStatus === 413
             ? "エラー: 録音が長すぎます。短く話してください"
             : describeHttpError(accepted.httpStatus, accepted.error);
-        setAnswer(message);
+        showFailure(message);
         noteOutcome({ outcome: message });
         return;
       }
@@ -1009,7 +1017,7 @@ export default function Index() {
       // （adr/002）。
       const result = await pollForAnswer(accepted.requestId, apiKey);
       if (result !== null) {
-        setAnswer(result.text);
+        showResult(result.text, result.ok);
         noteOutcome({ transcript: result.transcript, outcome: result.text });
         if (result.audioUrl) playAnswer(result.audioUrl);
         // 回答が届いた。⚠️ **読み上げの完了は待たない**（背面で鳴り続ける）。
@@ -1023,7 +1031,7 @@ export default function Index() {
       }
     } catch (e) {
       noteOutcome({ outcome: "送信に失敗しました: " + String(e) });
-      setAnswer("送信に失敗しました: " + String(e));
+      showFailure("送信に失敗しました: " + String(e));
       announceIfHandsFree("送信に失敗しました。もう一度お話しください。");
     } finally {
       setSending(false);
@@ -1116,6 +1124,21 @@ export default function Index() {
     }
   }
 
+  /** 回答を出す。`ok` が false なら失敗の文言として黄色の帯で出す。 */
+  function showResult(text: string, ok: boolean) {
+    setAnswer(text);
+    setAnswerFailed(!ok);
+  }
+
+  function showFailure(text: string) {
+    showResult(text, false);
+  }
+
+  function clearAnswer() {
+    setAnswer(null);
+    setAnswerFailed(false);
+  }
+
   /**
    * 回答ができるまで GET /ask/{id} を叩く。
    *
@@ -1136,7 +1159,12 @@ export default function Index() {
   async function pollForAnswer(
     requestId: string,
     key: string,
-  ): Promise<{ text: string; audioUrl?: string; transcript?: string } | null> {
+  ): Promise<{
+    text: string;
+    ok: boolean;
+    audioUrl?: string;
+    transcript?: string;
+  } | null> {
     const startedAt = Date.now();
 
     for (;;) {
@@ -1145,6 +1173,7 @@ export default function Index() {
       if (interval === null) {
         return {
           text: "時間がかかりすぎたため中断しました。もう一度お試しください。",
+          ok: false,
         };
       }
       await sleep(interval);
@@ -1161,7 +1190,7 @@ export default function Index() {
           // ⚠️ 429 はここでは諦めない。ポーリングは秒間1回叩くので
           // 一時的にレート上限に触れることがあり、次の周回で通る。
           if (res.status === 429) continue;
-          return { text: describeHttpError(res.status, result.error) };
+          return { text: describeHttpError(res.status, result.error), ok: false };
         }
       } catch (e) {
         // 走行中は電波が切れることがある。1回の失敗では諦めず、
@@ -1173,6 +1202,7 @@ export default function Index() {
       if (result.status === "done") {
         return {
           text: result.answer ?? "",
+          ok: true,
           audioUrl: result.audioUrl,
           transcript: result.transcript,
         };
@@ -1180,6 +1210,7 @@ export default function Index() {
       if (result.status === "error") {
         return {
           text: "エラー: " + (result.error ?? "回答できませんでした"),
+          ok: false,
           transcript: result.transcript,
         };
       }
@@ -1190,7 +1221,7 @@ export default function Index() {
   // 会話をリセットする。IDを捨てれば次の質問から新しい会話になる。
   function resetConversation() {
     setSessionId(null);
-    setAnswer(null);
+    clearAnswer();
     setQuestion("");
     // 会話が変わるので経過時間の起点も捨てる（次の質問がまた「最初」になる）。
     conversationStartedAt.current = null;
@@ -1225,6 +1256,85 @@ export default function Index() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // 回答待ちの経過秒数を数える（全面の青い画面に出す）。
+  // ⚠️ **待っていることが分からないと「落ちた」と区別がつかない**ので、数字を動かし続ける。
+  useEffect(() => {
+    if (!sending) {
+      setWaitingSec(null);
+      return;
+    }
+    const startedAt = Date.now();
+    setWaitingSec(0);
+    const timer = setInterval(() => {
+      setWaitingSec(Math.floor((Date.now() - startedAt) / 1000));
+    }, 500);
+    return () => clearInterval(timer);
+  }, [sending]);
+
+  // ⚠️ **走行中にチラ見して分かることが要件**（docs/01_architecture.md §11）。
+  // 録音中・回答待ち・読み上げ中は、画面全体をその状態の色で塗り、特大の文字だけを出す。
+  // 待機と失敗はふだんの画面（失敗は一番上に黄色の帯）。
+  const phase: "recording" | "waiting" | "speaking" | null = recording
+    ? "recording"
+    : sending
+      ? "waiting"
+      : playerStatus.playing
+        ? "speaking"
+        : null;
+
+  if (phase !== null) {
+    return (
+      <Pressable
+        style={[
+          styles.phaseScreen,
+          styles[`phase_${phase}`],
+          { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 24 },
+        ]}
+        // ⚠️ **録音中は画面のどこを押しても送信。** 手袋でも狙わずに押せるように。
+        // 読み上げ中は押すと止める。回答待ちは押しても何もしない。
+        onPress={
+          phase === "recording"
+            ? () => void stopRecordingAndSend()
+            : phase === "speaking"
+              ? () => player.pause()
+              : undefined
+        }
+      >
+        {phase === "recording" && (
+          <>
+            <Text style={styles.phaseTitle}>● 話してください</Text>
+            <Text style={styles.phaseBig}>
+              {remainingSec === null ? "—" : `あと ${remainingSec} 秒`}
+            </Text>
+            <Text style={styles.phaseNote}>
+              インカムのボタンか、画面のどこかを押すとすぐ送信します
+            </Text>
+            {micWarning && <Text style={styles.phaseWarning}>{micWarning}</Text>}
+          </>
+        )}
+        {phase === "waiting" && (
+          <>
+            <Text style={styles.phaseTitle}>考えています…</Text>
+            <Text style={styles.phaseBig}>{waitingSec ?? 0} 秒</Text>
+            <Text style={styles.phaseNote}>回答を待っています（最初の質問は10秒ほど）</Text>
+          </>
+        )}
+        {phase === "speaking" && (
+          <>
+            <Text style={styles.phaseTitle}>🔊 回答中</Text>
+            {answer && (
+              <Text style={styles.phaseAnswer} numberOfLines={8}>
+                {answer}
+              </Text>
+            )}
+            <Text style={styles.phaseNote}>画面を押すと読み上げを止めます</Text>
+          </>
+        )}
+        <Text style={styles.phaseVersion}>v{APP_VERSION}</Text>
+      </Pressable>
+    );
+  }
+
   return (
     <ScrollView
       contentContainerStyle={[
@@ -1236,6 +1346,14 @@ export default function Index() {
     >
       {/* 実機で更新が反映されたかを確かめるための表示（走行中には使わない） */}
       <Text style={styles.version}>v{APP_VERSION}</Text>
+
+      {/* ⚠️ **失敗は一番上に大きく出す。** 下の回答欄だけだとチラ見では気づけない。 */}
+      {answer && answerFailed && (
+        <View style={styles.failureBanner}>
+          <Text style={styles.failureTitle}>⚠ 失敗しました</Text>
+          <Text style={styles.failureText}>{answer}</Text>
+        </View>
+      )}
 
       <Text style={styles.status}>{status}</Text>
 
@@ -1370,7 +1488,7 @@ export default function Index() {
         </View>
       )}
 
-      {answer && (
+      {answer && !answerFailed && (
         <View style={styles.answerCard}>
           <Text style={styles.label}>回答</Text>
           <Text style={styles.answer}>{answer}</Text>
@@ -1396,6 +1514,54 @@ export default function Index() {
 }
 
 const styles = StyleSheet.create({
+  /**
+   * 録音中・回答待ち・読み上げ中の全面表示。
+   *
+   * ⚠️ **色だけで状態が分かること**（視界の端でも読める）と、
+   * **文字は一瞬で読める大きさ**が要件。色は 赤＝録音中、青＝回答待ち、緑＝読み上げ中。
+   */
+  phaseScreen: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 24,
+    gap: 28,
+  },
+  phase_recording: { backgroundColor: "#C62828" },
+  phase_waiting: { backgroundColor: "#1565C0" },
+  phase_speaking: { backgroundColor: "#2E7D32" },
+  phaseTitle: {
+    fontSize: 44,
+    fontWeight: "bold",
+    color: "#FFFFFF",
+    textAlign: "center",
+  },
+  // 画面でいちばん大きい文字（残り秒数・経過秒数）。
+  phaseBig: {
+    fontSize: 88,
+    fontWeight: "bold",
+    color: "#FFFFFF",
+    fontVariant: ["tabular-nums"],
+  },
+  phaseNote: { fontSize: 18, color: "#FFFFFFCC", textAlign: "center" },
+  phaseWarning: {
+    fontSize: 20,
+    fontWeight: "bold",
+    color: "#FFF59D",
+    textAlign: "center",
+  },
+  phaseAnswer: { fontSize: 24, color: "#FFFFFF", lineHeight: 34 },
+  phaseVersion: { fontSize: 11, color: "#FFFFFF66" },
+  // 失敗の帯。⚠️ 黄色は待機の画面のどの色とも被らない（チラ見で「失敗」と分かる）。
+  failureBanner: {
+    alignSelf: "stretch",
+    backgroundColor: "#F9A825",
+    borderRadius: 12,
+    padding: 20,
+    gap: 8,
+  },
+  failureTitle: { fontSize: 32, fontWeight: "bold", color: "#1E1E2E" },
+  failureText: { fontSize: 18, color: "#1E1E2E" },
   container: {
     flexGrow: 1,
     alignItems: "center",
@@ -1444,17 +1610,18 @@ const styles = StyleSheet.create({
   value: { fontSize: 20, fontWeight: "bold", color: "#FF6B35" },
   voiceArea: { alignSelf: "stretch", alignItems: "center", gap: 8 },
   // ⚠️ 走行中はこれを見ずに押す。指の当たる面積を大きく取る。
+  // ⚠️ **待機中の本命の入口。** 停車中に手袋で押せて、チラ見で見つかる大きさにする。
   voiceButton: {
     alignSelf: "stretch",
     backgroundColor: "#FF6B35",
-    paddingVertical: 28,
-    borderRadius: 12,
+    paddingVertical: 48,
+    borderRadius: 16,
     alignItems: "center",
   },
   // 録音中は色を変える。画面を一瞬見たときに状態が分かるように。
   voiceButtonRecording: { backgroundColor: "#C0392B" },
   voiceButtonDisabled: { backgroundColor: "#8A5A44" },
-  voiceButtonText: { color: "#FFFFFF", fontSize: 22, fontWeight: "bold" },
+  voiceButtonText: { color: "#FFFFFF", fontSize: 36, fontWeight: "bold" },
   /**
    * 自動送信までの残り秒数（adr/003・方式D）。
    *
