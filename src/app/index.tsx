@@ -34,6 +34,11 @@ import {
   type RecordingSettings,
 } from "@/api/recordingSettings";
 import { loadReturnApp } from "@/api/returnApp";
+import {
+  keepRecording,
+  recordingId,
+  updateRecording,
+} from "@/api/recordingHistory";
 import { claimPress, parsePressedAt } from "@/api/handsfreeLaunch";
 import AppForeground from "@/native/app-foreground";
 import {
@@ -902,6 +907,8 @@ export default function Index() {
     // **最初の1回だけが通る**（ここで ref を倒すため二重送信にならない）。
     if (!recordingRef.current) return;
     recordingRef.current = false;
+    // 録音の長さを履歴に残すため、倒す前に控えておく。
+    const startedAt = recordingStartedAt.current;
     recordingStartedAt.current = null;
     if (recordingTimer.current) {
       clearTimeout(recordingTimer.current);
@@ -938,12 +945,29 @@ export default function Index() {
       launchedHandsFree.current = false;
       return;
     }
+    // 📌 **端末に残す**（設定画面の「録音の確認」で聞き直すため）。
+    // ⚠️ **完了を待たない。** 送信を遅らせないため。失敗しても送信は続ける。
+    const now = Date.now();
+    if (uri) {
+      void keepRecording(uri, {
+        recordedAt: now,
+        durationMs: startedAt === null ? 0 : now - startedAt,
+        audioSource: settingsRef.current.audioSource,
+        mic: micRouteRef.current ? describeMicRoute(micRouteRef.current) : "不明",
+        sent: true,
+      });
+    }
+    const noteOutcome = (patch: { transcript?: string; outcome: string }) => {
+      if (uri) void updateRecording(recordingId(now), patch);
+    };
+
     // ⚠️ **最新の位置とキーを ref から読む。** この関数はタイマーやインカムの通知から
     // 「録音を始めたときのレンダー」のまま呼ばれるので、state だと録音開始時点の位置で送ってしまう。
     const coords = coordsRef.current;
     const apiKey = apiKeyRef.current;
     if (!uri || !coords || !apiKey || !API_BASE_URL) {
       setAnswer("エラー: 録音を送信できませんでした");
+      noteOutcome({ outcome: "エラー: 録音を送信できませんでした" });
       launchedHandsFree.current = false;
       return;
     }
@@ -960,11 +984,12 @@ export default function Index() {
       );
       if (accepted.httpStatus !== 202) {
         // ⚠️ 413 は録音が長すぎたとき。走行中に意味が取れる言葉にする。
-        setAnswer(
+        const message =
           accepted.httpStatus === 413
             ? "エラー: 録音が長すぎます。短く話してください"
-            : describeHttpError(accepted.httpStatus, accepted.error),
-        );
+            : describeHttpError(accepted.httpStatus, accepted.error);
+        setAnswer(message);
+        noteOutcome({ outcome: message });
         return;
       }
       setSessionId(accepted.sessionId);
@@ -981,6 +1006,7 @@ export default function Index() {
       const result = await pollForAnswer(accepted.requestId, apiKey);
       if (result !== null) {
         setAnswer(result.text);
+        noteOutcome({ transcript: result.transcript, outcome: result.text });
         if (result.audioUrl) playAnswer(result.audioUrl);
         // 回答が届いた。⚠️ **読み上げの完了は待たない**（背面で鳴り続ける）。
         void returnToMapIfHandsFree();
@@ -988,9 +1014,11 @@ export default function Index() {
         // 黙ると「何も起きなかった」と区別がつかないので、本文を読み上げる。
         if (!result.audioUrl) announceIfHandsFree(result.text);
       } else {
+        noteOutcome({ outcome: "回答を取得できませんでした" });
         announceIfHandsFree("回答を取得できませんでした。もう一度お話しください。");
       }
     } catch (e) {
+      noteOutcome({ outcome: "送信に失敗しました: " + String(e) });
       setAnswer("送信に失敗しました: " + String(e));
       announceIfHandsFree("送信に失敗しました。もう一度お話しください。");
     } finally {
@@ -1104,7 +1132,7 @@ export default function Index() {
   async function pollForAnswer(
     requestId: string,
     key: string,
-  ): Promise<{ text: string; audioUrl?: string } | null> {
+  ): Promise<{ text: string; audioUrl?: string; transcript?: string } | null> {
     const startedAt = Date.now();
 
     for (;;) {
@@ -1137,11 +1165,19 @@ export default function Index() {
         continue;
       }
 
+      // 📌 `transcript` は録音の質問だけに載る（録音の確認で聞き直すときに並べる）。
       if (result.status === "done") {
-        return { text: result.answer ?? "", audioUrl: result.audioUrl };
+        return {
+          text: result.answer ?? "",
+          audioUrl: result.audioUrl,
+          transcript: result.transcript,
+        };
       }
       if (result.status === "error") {
-        return { text: "エラー: " + (result.error ?? "回答できませんでした") };
+        return {
+          text: "エラー: " + (result.error ?? "回答できませんでした"),
+          transcript: result.transcript,
+        };
       }
       // pending ならもう一周
     }

@@ -4,9 +4,10 @@
  * 走行中には使わない画面なので、作り込みは最小限にとどめる
  * （親の AGENTS.md「App は薄いクライアントに徹し、UI は最小限」）。停車中に触る想定。
  *
- * 扱うのは3つ:
+ * 扱うのは4つ:
  *   - **APIキー**（一度入れたら変えない）
  *   - **録音の設定**（上限の秒数・録音の用途）
+ *   - **録音の確認**（試し録りと、送った録音の聞き直し。src/components/RecordingCheck.tsx）
  *   - **応答後に戻るアプリ**（⚠️ **戻る/戻らない**と**どのアプリか**は別物。
  *     一時的に切っただけで選択が消えると、戻すときに選び直しになる）
  *
@@ -29,6 +30,7 @@ import {
   type LaunchableApp,
 } from "@/api/returnApp";
 import AppForeground from "@/native/app-foreground";
+import RecordingCheck from "@/components/RecordingCheck";
 import {
   AUDIO_SOURCE_CHOICES,
   DEFAULT_RECORDING_SETTINGS,
@@ -374,6 +376,10 @@ export default function Settings() {
       </Pressable>
 
       {recMessage && <Text style={styles.message}>{recMessage}</Text>}
+
+      <View style={styles.divider} />
+      {/* ⚠️ **保存済みの設定を渡す**（試し録りは本番と同じ用途・上限で録る）。 */}
+      <RecordingCheck settings={rec} />
 
       <View style={styles.divider} />
 
