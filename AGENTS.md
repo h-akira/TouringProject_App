@@ -12,7 +12,7 @@
 | `docs/` | App の設計（現在の姿だけ） |
 | `adr/` | App の決定の経緯（書き方は親の `AGENTS.md`） |
 | `docs-parent/` | 親の `docs/` の写し（要件・技術方針・契約・OpenAPI）。⚠️ 編集しない。更新は親の `docs/sync.sh` |
-| `README.md` / `SETUP.md` | 使い方 / 初回のセットアップ・ビルド・配信・困ったとき |
+| `README.md` / `USAGE.md` / `SETUP.md` | 概要・開発の手順 / アプリの使い方 / 初回のセットアップ・ビルド・配信・困ったとき |
 
 コードのコメントから参照してよいのは、`docs/`・`adr/`・`docs-parent/` と research の絶対 URL だけ（learning は参照しない）。
 
